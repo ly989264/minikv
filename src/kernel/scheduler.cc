@@ -5,7 +5,7 @@
 
 namespace minikv {
 
-Scheduler::Scheduler(CommandContext* context, size_t worker_count,
+Scheduler::Scheduler(CommandServices* context, size_t worker_count,
                      size_t max_queue_depth)
     : context_(context),
       key_lock_table_(KeyLockTable::DefaultStripeCount(worker_count)) {
@@ -43,14 +43,6 @@ rocksdb::Status Scheduler::Submit(std::unique_ptr<Cmd> cmd,
 
   rejected_requests_.fetch_add(1, std::memory_order_relaxed);
   return rocksdb::Status::Busy("worker queue full");
-}
-
-CommandResponse Scheduler::ExecuteInline(std::unique_ptr<Cmd> cmd) {
-  if (cmd == nullptr) {
-    return CommandResponse{rocksdb::Status::InvalidArgument("cmd is required"),
-                           {}};
-  }
-  return ExecuteCommand(context_, &key_lock_table_, cmd.get());
 }
 
 std::vector<size_t> Scheduler::worker_queue_depth() const {

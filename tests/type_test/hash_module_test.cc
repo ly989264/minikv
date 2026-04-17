@@ -8,7 +8,7 @@
 #include "gtest/gtest.h"
 #include "kernel/mutation_hook.h"
 #include "kernel/storage_engine.h"
-#include "minikv/config.h"
+#include "config.h"
 #include "rocksdb/db.h"
 #include "types/hash/hash_module.h"
 

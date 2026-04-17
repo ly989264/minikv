@@ -4,13 +4,13 @@
 #include <unistd.h>
 #include <vector>
 
-#include "engine/key_codec.h"
+#include "codec/key_codec.h"
 #include "gtest/gtest.h"
 #include "kernel/snapshot.h"
 #include "kernel/storage_engine.h"
 #include "kernel/write_context.h"
-#include "minikv/command.h"
 #include "rocksdb/db.h"
+#include "types/hash/hash_module.h"
 
 namespace {
 

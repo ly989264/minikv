@@ -36,14 +36,6 @@ CmdInput MakeInput(const std::vector<std::string>& parts) {
   return input;
 }
 
-CmdInput MakeInput(const CommandRequest& request) {
-  CmdInput input;
-  input.key = request.key;
-  input.args = request.args;
-  input.has_key = request.has_key;
-  return input;
-}
-
 }  // namespace
 
 rocksdb::Status CreateCmd(const std::vector<std::string>& parts,
@@ -62,24 +54,6 @@ rocksdb::Status CreateCmd(const std::vector<std::string>& parts,
     return rocksdb::Status::InvalidArgument("unsupported command");
   }
   return CreateCmdFromRegistration(*registration, MakeInput(parts), cmd);
-}
-
-rocksdb::Status CreateCmd(const CommandRequest& request,
-                          std::unique_ptr<Cmd>* cmd) {
-  if (cmd == nullptr) {
-    return rocksdb::Status::InvalidArgument("cmd output is required");
-  }
-  cmd->reset();
-
-  if (request.name.empty()) {
-    return rocksdb::Status::InvalidArgument("unknown command type");
-  }
-  const CmdRegistration* registration =
-      CmdFactory::FindByName(NormalizeCommandName(request.name));
-  if (registration == nullptr) {
-    return rocksdb::Status::InvalidArgument("unsupported command");
-  }
-  return CreateCmdFromRegistration(*registration, MakeInput(request), cmd);
 }
 
 }  // namespace minikv

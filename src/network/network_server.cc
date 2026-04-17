@@ -1,4 +1,4 @@
-#include "server/server.h"
+#include "network/network_server.h"
 
 #ifndef _WIN32
 
@@ -10,30 +10,134 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include <atomic>
 #include <cerrno>
 #include <chrono>
+#include <condition_variable>
 #include <cstring>
+#include <deque>
+#include <map>
 #include <memory>
+#include <mutex>
+#include <string>
 #include <thread>
 #include <utility>
 #include <vector>
 
 #include "command/cmd_create.h"
+#include "command/command_types.h"
 #include "common/thread_name.h"
 #include "kernel/scheduler.h"
-#include "server/resp_parser.h"
+#include "minikv.h"
+#include "network/resp_parser.h"
 
 namespace minikv {
 
-Server::Server(const Config& config, MiniKV* minikv)
-    : config_(config), minikv_(minikv) {}
+struct NetworkServer::Impl {
+  struct Connection {
+    uint64_t id = 0;
+    int fd = -1;
+    std::string read_buffer;
+    std::string write_buffer;
+    size_t write_offset = 0;
+    size_t pending_requests = 0;
+    uint64_t next_request_seq = 0;
+    uint64_t next_response_seq = 0;
+    std::map<uint64_t, CommandResponse> buffered_responses;
+    bool close_after_write = false;
+    bool close_due_to_idle_timeout = false;
+    bool close_due_to_error = false;
+    std::chrono::steady_clock::time_point last_activity;
+  };
 
-Server::~Server() {
-  Stop();
-  Wait();
+  struct CompletedResponse {
+    uint64_t connection_id = 0;
+    uint64_t request_seq = 0;
+    CommandResponse response;
+  };
+
+  struct IOThreadState {
+    std::mutex mutex;
+    std::condition_variable cv;
+    std::deque<int> pending_fds;
+    std::deque<CompletedResponse> completed;
+    std::vector<Connection> connections;
+    std::thread thread;
+    int wakeup_read_fd = -1;
+    int wakeup_write_fd = -1;
+    std::atomic<size_t> inflight_requests{0};
+  };
+
+  Impl(const Config& config_value, MiniKV* minikv_value)
+      : config(config_value), minikv(minikv_value) {}
+
+  ~Impl() {
+    Stop();
+    Wait();
+  }
+
+  rocksdb::Status Start();
+  void Stop();
+  void Wait();
+  rocksdb::Status Run();
+  MetricsSnapshot GetMetricsSnapshot() const;
+
+  rocksdb::Status SetupListenSocket();
+  static rocksdb::Status SetNonBlocking(int fd);
+  void AcceptLoop();
+  void RunIOThread(size_t io_thread_id);
+  void EnqueueConnection(int fd);
+  void DrainIOState(IOThreadState* io_thread);
+  void CloseIdleConnections(IOThreadState* io_thread);
+  bool HandleReadable(size_t io_thread_id, Connection* connection);
+  bool HandleWritable(Connection* connection);
+  void CloseConnection(Connection* connection);
+  void QueueResponse(Connection* connection, std::string response);
+  Connection* FindConnection(IOThreadState* io_thread, uint64_t connection_id);
+  void NotifyIOThread(IOThreadState* io_thread) const;
+
+  Config config;
+  MiniKV* minikv = nullptr;
+  int listen_fd = -1;
+  uint16_t bound_port = 0;
+  std::thread accept_thread;
+  std::vector<std::unique_ptr<IOThreadState>> io_threads;
+  std::atomic<size_t> next_io_thread{0};
+  std::atomic<uint64_t> next_connection_id{1};
+  std::atomic<size_t> connection_count{0};
+  std::atomic<uint64_t> accepted_connections{0};
+  std::atomic<uint64_t> closed_connections{0};
+  std::atomic<uint64_t> idle_timeout_connections{0};
+  std::atomic<uint64_t> errored_connections{0};
+  std::atomic<uint64_t> parse_errors{0};
+  std::atomic<bool> stopping{false};
+  std::atomic<bool> started{false};
+};
+
+NetworkServer::NetworkServer(const Config& config, MiniKV* minikv)
+    : impl_(std::make_unique<Impl>(config, minikv)) {}
+
+NetworkServer::~NetworkServer() = default;
+
+rocksdb::Status NetworkServer::Start() { return impl_->Start(); }
+
+void NetworkServer::Stop() { impl_->Stop(); }
+
+void NetworkServer::Wait() { impl_->Wait(); }
+
+rocksdb::Status NetworkServer::Run() { return impl_->Run(); }
+
+uint16_t NetworkServer::port() const { return impl_->bound_port; }
+
+MetricsSnapshot NetworkServer::GetMetricsSnapshot() const {
+  return impl_->GetMetricsSnapshot();
 }
 
-rocksdb::Status Server::SetNonBlocking(int fd) {
+Scheduler* NetworkServer::GetScheduler(MiniKV* minikv) {
+  return minikv != nullptr ? minikv->scheduler() : nullptr;
+}
+
+rocksdb::Status NetworkServer::Impl::SetNonBlocking(int fd) {
   const int flags = fcntl(fd, F_GETFL, 0);
   if (flags < 0) {
     return rocksdb::Status::IOError("fcntl(F_GETFL)", std::strerror(errno));
@@ -44,56 +148,57 @@ rocksdb::Status Server::SetNonBlocking(int fd) {
   return rocksdb::Status::OK();
 }
 
-rocksdb::Status Server::SetupListenSocket() {
-  listen_fd_ = socket(AF_INET, SOCK_STREAM, 0);
-  if (listen_fd_ < 0) {
+rocksdb::Status NetworkServer::Impl::SetupListenSocket() {
+  listen_fd = socket(AF_INET, SOCK_STREAM, 0);
+  if (listen_fd < 0) {
     return rocksdb::Status::IOError("socket", std::strerror(errno));
   }
 
   int opt = 1;
-  setsockopt(listen_fd_, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+  setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
 
   sockaddr_in addr {};
   addr.sin_family = AF_INET;
-  addr.sin_port = htons(config_.port);
-  if (inet_pton(AF_INET, config_.bind_host.c_str(), &addr.sin_addr) != 1) {
+  addr.sin_port = htons(config.port);
+  if (inet_pton(AF_INET, config.bind_host.c_str(), &addr.sin_addr) != 1) {
     return rocksdb::Status::InvalidArgument("invalid bind host");
   }
 
-  if (bind(listen_fd_, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) {
+  if (bind(listen_fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) {
     return rocksdb::Status::IOError("bind", std::strerror(errno));
   }
-  if (listen(listen_fd_, 128) != 0) {
+  if (listen(listen_fd, 128) != 0) {
     return rocksdb::Status::IOError("listen", std::strerror(errno));
   }
 
   sockaddr_in bound_addr {};
   socklen_t bound_addr_len = sizeof(bound_addr);
-  if (getsockname(listen_fd_, reinterpret_cast<sockaddr*>(&bound_addr),
+  if (getsockname(listen_fd, reinterpret_cast<sockaddr*>(&bound_addr),
                   &bound_addr_len) != 0) {
     return rocksdb::Status::IOError("getsockname", std::strerror(errno));
   }
-  bound_port_ = ntohs(bound_addr.sin_port);
-  return SetNonBlocking(listen_fd_);
+  bound_port = ntohs(bound_addr.sin_port);
+  return SetNonBlocking(listen_fd);
 }
 
-rocksdb::Status Server::Start() {
-  if (started_.exchange(true)) {
-    return rocksdb::Status::InvalidArgument("server already started");
+rocksdb::Status NetworkServer::Impl::Start() {
+  if (started.exchange(true)) {
+    return rocksdb::Status::InvalidArgument("network server already started");
   }
-  accepted_connections_.store(0, std::memory_order_relaxed);
-  closed_connections_.store(0, std::memory_order_relaxed);
-  idle_timeout_connections_.store(0, std::memory_order_relaxed);
-  errored_connections_.store(0, std::memory_order_relaxed);
-  parse_errors_.store(0, std::memory_order_relaxed);
+  stopping.store(false);
+  accepted_connections.store(0, std::memory_order_relaxed);
+  closed_connections.store(0, std::memory_order_relaxed);
+  idle_timeout_connections.store(0, std::memory_order_relaxed);
+  errored_connections.store(0, std::memory_order_relaxed);
+  parse_errors.store(0, std::memory_order_relaxed);
   rocksdb::Status status = SetupListenSocket();
   if (!status.ok()) {
-    started_.store(false);
+    started.store(false);
     return status;
   }
 
-  const size_t io_thread_count = std::max<size_t>(1, config_.io_threads);
-  io_threads_.reserve(io_thread_count);
+  const size_t io_thread_count = std::max<size_t>(1, config.io_threads);
+  io_threads.reserve(io_thread_count);
   for (size_t i = 0; i < io_thread_count; ++i) {
     auto io_thread = std::make_unique<IOThreadState>();
     int wakeup_pipe[2];
@@ -115,37 +220,37 @@ rocksdb::Status Server::Start() {
       close(io_thread->wakeup_write_fd);
       return status;
     }
-    io_threads_.push_back(std::move(io_thread));
+    io_threads.push_back(std::move(io_thread));
   }
-  for (size_t i = 0; i < io_threads_.size(); ++i) {
-    io_threads_[i]->thread = std::thread([this, i] { RunIOThread(i); });
+  for (size_t i = 0; i < io_threads.size(); ++i) {
+    io_threads[i]->thread = std::thread([this, i] { RunIOThread(i); });
   }
 
-  accept_thread_ = std::thread([this] { AcceptLoop(); });
+  accept_thread = std::thread([this] { AcceptLoop(); });
   return rocksdb::Status::OK();
 }
 
-void Server::Stop() {
-  if (!started_.load()) {
+void NetworkServer::Impl::Stop() {
+  if (!started.load()) {
     return;
   }
-  stopping_.store(true);
-  if (listen_fd_ >= 0) {
-    shutdown(listen_fd_, SHUT_RDWR);
-    close(listen_fd_);
-    listen_fd_ = -1;
+  stopping.store(true);
+  if (listen_fd >= 0) {
+    shutdown(listen_fd, SHUT_RDWR);
+    close(listen_fd);
+    listen_fd = -1;
   }
-  for (auto& io_thread : io_threads_) {
+  for (auto& io_thread : io_threads) {
     io_thread->cv.notify_one();
     NotifyIOThread(io_thread.get());
   }
 }
 
-void Server::Wait() {
-  if (accept_thread_.joinable()) {
-    accept_thread_.join();
+void NetworkServer::Impl::Wait() {
+  if (accept_thread.joinable()) {
+    accept_thread.join();
   }
-  for (auto& io_thread : io_threads_) {
+  for (auto& io_thread : io_threads) {
     if (io_thread->thread.joinable()) {
       io_thread->thread.join();
     }
@@ -158,11 +263,11 @@ void Server::Wait() {
       io_thread->wakeup_write_fd = -1;
     }
   }
-  io_threads_.clear();
-  started_.store(false);
+  io_threads.clear();
+  started.store(false);
 }
 
-rocksdb::Status Server::Run() {
+rocksdb::Status NetworkServer::Impl::Run() {
   rocksdb::Status status = Start();
   if (!status.ok()) {
     return status;
@@ -171,19 +276,19 @@ rocksdb::Status Server::Run() {
   return rocksdb::Status::OK();
 }
 
-MetricsSnapshot Server::GetMetricsSnapshot() const {
+MetricsSnapshot NetworkServer::Impl::GetMetricsSnapshot() const {
   MetricsSnapshot snapshot;
-  snapshot.active_connections = connection_count_.load(std::memory_order_relaxed);
+  snapshot.active_connections = connection_count.load(std::memory_order_relaxed);
   snapshot.accepted_connections =
-      accepted_connections_.load(std::memory_order_relaxed);
-  snapshot.closed_connections = closed_connections_.load(std::memory_order_relaxed);
+      accepted_connections.load(std::memory_order_relaxed);
+  snapshot.closed_connections = closed_connections.load(std::memory_order_relaxed);
   snapshot.idle_timeout_connections =
-      idle_timeout_connections_.load(std::memory_order_relaxed);
-  snapshot.errored_connections =
-      errored_connections_.load(std::memory_order_relaxed);
-  snapshot.parse_errors = parse_errors_.load(std::memory_order_relaxed);
-  if (minikv_ != nullptr) {
-    MetricsSnapshot worker_snapshot = minikv_->scheduler()->GetMetricsSnapshot();
+      idle_timeout_connections.load(std::memory_order_relaxed);
+  snapshot.errored_connections = errored_connections.load(std::memory_order_relaxed);
+  snapshot.parse_errors = parse_errors.load(std::memory_order_relaxed);
+  if (minikv != nullptr) {
+    MetricsSnapshot worker_snapshot =
+        GetScheduler(minikv)->GetMetricsSnapshot();
     snapshot.worker_queue_depth = std::move(worker_snapshot.worker_queue_depth);
     snapshot.worker_rejections = worker_snapshot.worker_rejections;
     snapshot.worker_inflight = worker_snapshot.worker_inflight;
@@ -191,12 +296,12 @@ MetricsSnapshot Server::GetMetricsSnapshot() const {
   return snapshot;
 }
 
-void Server::AcceptLoop() {
+void NetworkServer::Impl::AcceptLoop() {
   SetCurrentThreadName("minikv-accept");
-  while (!stopping_.load()) {
-    int client_fd = accept(listen_fd_, nullptr, nullptr);
+  while (!stopping.load()) {
+    int client_fd = accept(listen_fd, nullptr, nullptr);
     if (client_fd < 0) {
-      if (stopping_.load()) {
+      if (stopping.load()) {
         return;
       }
       if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK) {
@@ -214,17 +319,17 @@ void Server::AcceptLoop() {
   }
 }
 
-void Server::EnqueueConnection(int fd) {
-  const size_t observed = connection_count_.fetch_add(1) + 1;
-  if (observed > config_.max_connections) {
-    connection_count_.fetch_sub(1);
+void NetworkServer::Impl::EnqueueConnection(int fd) {
+  const size_t observed = connection_count.fetch_add(1) + 1;
+  if (observed > config.max_connections) {
+    connection_count.fetch_sub(1);
     close(fd);
     return;
   }
-  accepted_connections_.fetch_add(1, std::memory_order_relaxed);
+  accepted_connections.fetch_add(1, std::memory_order_relaxed);
 
-  const size_t io_index = next_io_thread_.fetch_add(1) % io_threads_.size();
-  IOThreadState* io_thread = io_threads_[io_index].get();
+  const size_t io_index = next_io_thread.fetch_add(1) % io_threads.size();
+  IOThreadState* io_thread = io_threads[io_index].get();
   {
     std::lock_guard<std::mutex> lock(io_thread->mutex);
     io_thread->pending_fds.push_back(fd);
@@ -232,7 +337,7 @@ void Server::EnqueueConnection(int fd) {
   NotifyIOThread(io_thread);
 }
 
-void Server::NotifyIOThread(IOThreadState* io_thread) const {
+void NetworkServer::Impl::NotifyIOThread(IOThreadState* io_thread) const {
   if (io_thread->wakeup_write_fd < 0) {
     return;
   }
@@ -241,7 +346,7 @@ void Server::NotifyIOThread(IOThreadState* io_thread) const {
   (void)ignored;
 }
 
-void Server::DrainIOState(IOThreadState* io_thread) {
+void NetworkServer::Impl::DrainIOState(IOThreadState* io_thread) {
   std::deque<int> pending_fds;
   std::deque<CompletedResponse> completed;
   {
@@ -252,7 +357,7 @@ void Server::DrainIOState(IOThreadState* io_thread) {
 
   while (!pending_fds.empty()) {
     Connection connection;
-    connection.id = next_connection_id_.fetch_add(1);
+    connection.id = next_connection_id.fetch_add(1);
     connection.fd = pending_fds.front();
     pending_fds.pop_front();
     connection.read_buffer.reserve(4096);
@@ -284,23 +389,22 @@ void Server::DrainIOState(IOThreadState* io_thread) {
       connection->buffered_responses.erase(response_it);
       ++connection->next_response_seq;
     }
-    if (stopping_.load() && connection->pending_requests == 0) {
+    if (stopping.load() && connection->pending_requests == 0) {
       connection->close_after_write = true;
     }
   }
 }
 
-void Server::CloseIdleConnections(IOThreadState* io_thread) {
+void NetworkServer::Impl::CloseIdleConnections(IOThreadState* io_thread) {
   const auto now = std::chrono::steady_clock::now();
-  const auto idle_limit =
-      std::chrono::milliseconds(config_.idle_connection_timeout_ms);
+  const auto idle_limit = std::chrono::milliseconds(config.idle_connection_timeout_ms);
   for (auto& connection : io_thread->connections) {
     if (connection.pending_requests != 0 ||
         connection.write_offset < connection.write_buffer.size()) {
       continue;
     }
-    if (stopping_.load() || now - connection.last_activity >= idle_limit) {
-      if (!stopping_.load() && now - connection.last_activity >= idle_limit) {
+    if (stopping.load() || now - connection.last_activity >= idle_limit) {
+      if (!stopping.load() && now - connection.last_activity >= idle_limit) {
         connection.close_due_to_idle_timeout = true;
       }
       connection.close_after_write = true;
@@ -308,9 +412,9 @@ void Server::CloseIdleConnections(IOThreadState* io_thread) {
   }
 }
 
-void Server::RunIOThread(size_t io_thread_id) {
+void NetworkServer::Impl::RunIOThread(size_t io_thread_id) {
   SetCurrentThreadName("minikv-io" + std::to_string(io_thread_id));
-  IOThreadState* io_thread = io_threads_[io_thread_id].get();
+  IOThreadState* io_thread = io_threads[io_thread_id].get();
 
   while (true) {
     DrainIOState(io_thread);
@@ -318,7 +422,7 @@ void Server::RunIOThread(size_t io_thread_id) {
 
     {
       std::lock_guard<std::mutex> lock(io_thread->mutex);
-      if (stopping_.load() && io_thread->connections.empty() &&
+      if (stopping.load() && io_thread->connections.empty() &&
           io_thread->pending_fds.empty() && io_thread->completed.empty() &&
           io_thread->inflight_requests.load(std::memory_order_relaxed) == 0) {
         return;
@@ -331,7 +435,6 @@ void Server::RunIOThread(size_t io_thread_id) {
     pollfd wakeup_fd {};
     wakeup_fd.fd = io_thread->wakeup_read_fd;
     wakeup_fd.events = POLLIN;
-    wakeup_fd.revents = 0;
     poll_fds.push_back(wakeup_fd);
 
     for (const auto& connection : io_thread->connections) {
@@ -341,7 +444,6 @@ void Server::RunIOThread(size_t io_thread_id) {
       if (connection.write_offset < connection.write_buffer.size()) {
         poll_fd.events |= POLLOUT;
       }
-      poll_fd.revents = 0;
       poll_fds.push_back(poll_fd);
     }
 
@@ -358,8 +460,7 @@ void Server::RunIOThread(size_t io_thread_id) {
 
     if ((poll_fds[0].revents & POLLIN) != 0) {
       char wake_buffer[64];
-      while (read(io_thread->wakeup_read_fd, wake_buffer, sizeof(wake_buffer)) >
-             0) {
+      while (read(io_thread->wakeup_read_fd, wake_buffer, sizeof(wake_buffer)) > 0) {
       }
     }
 
@@ -408,7 +509,8 @@ void Server::RunIOThread(size_t io_thread_id) {
   io_thread->connections.clear();
 }
 
-bool Server::HandleReadable(size_t io_thread_id, Connection* connection) {
+bool NetworkServer::Impl::HandleReadable(size_t io_thread_id,
+                                         Connection* connection) {
   RespParser parser;
   char read_buffer[4096];
   while (true) {
@@ -430,7 +532,7 @@ bool Server::HandleReadable(size_t io_thread_id, Connection* connection) {
 
     connection->last_activity = std::chrono::steady_clock::now();
     connection->read_buffer.append(read_buffer, static_cast<size_t>(bytes));
-    if (connection->read_buffer.size() > config_.max_request_bytes) {
+    if (connection->read_buffer.size() > config.max_request_bytes) {
       QueueResponse(connection, EncodeError("ERR request too large"));
       connection->close_after_write = true;
       if (!HandleWritable(connection)) {
@@ -450,7 +552,7 @@ bool Server::HandleReadable(size_t io_thread_id, Connection* connection) {
         break;
       }
       if (!error.empty()) {
-        parse_errors_.fetch_add(1, std::memory_order_relaxed);
+        parse_errors.fetch_add(1, std::memory_order_relaxed);
         QueueResponse(connection, EncodeError("ERR " + error));
         continue;
       }
@@ -464,17 +566,17 @@ bool Server::HandleReadable(size_t io_thread_id, Connection* connection) {
 
       ++connection->pending_requests;
       const uint64_t request_seq = connection->next_request_seq++;
-      IOThreadState* io_thread = io_threads_[io_thread_id].get();
+      IOThreadState* io_thread = io_threads[io_thread_id].get();
       io_thread->inflight_requests.fetch_add(1, std::memory_order_relaxed);
-      status = minikv_->Submit(
+      status = GetScheduler(minikv)->Submit(
           std::move(cmd),
           [this, io_thread_id, connection_id = connection->id, request_seq](
               CommandResponse response) mutable {
-            IOThreadState* state = io_threads_[io_thread_id].get();
+            IOThreadState* state = io_threads[io_thread_id].get();
             {
               std::lock_guard<std::mutex> lock(state->mutex);
-              state->completed.push_back(CompletedResponse{
-                  connection_id, request_seq, std::move(response)});
+              state->completed.push_back(
+                  CompletedResponse{connection_id, request_seq, std::move(response)});
             }
             NotifyIOThread(state);
           });
@@ -488,7 +590,7 @@ bool Server::HandleReadable(size_t io_thread_id, Connection* connection) {
   return true;
 }
 
-bool Server::HandleWritable(Connection* connection) {
+bool NetworkServer::Impl::HandleWritable(Connection* connection) {
   while (connection->write_offset < connection->write_buffer.size()) {
     const char* data =
         connection->write_buffer.data() + connection->write_offset;
@@ -516,22 +618,23 @@ bool Server::HandleWritable(Connection* connection) {
   return true;
 }
 
-void Server::CloseConnection(Connection* connection) {
+void NetworkServer::Impl::CloseConnection(Connection* connection) {
   if (connection->fd >= 0) {
     close(connection->fd);
     connection->fd = -1;
-    connection_count_.fetch_sub(1);
-    closed_connections_.fetch_add(1, std::memory_order_relaxed);
+    connection_count.fetch_sub(1);
+    closed_connections.fetch_add(1, std::memory_order_relaxed);
     if (connection->close_due_to_idle_timeout) {
-      idle_timeout_connections_.fetch_add(1, std::memory_order_relaxed);
+      idle_timeout_connections.fetch_add(1, std::memory_order_relaxed);
     }
     if (connection->close_due_to_error) {
-      errored_connections_.fetch_add(1, std::memory_order_relaxed);
+      errored_connections.fetch_add(1, std::memory_order_relaxed);
     }
   }
 }
 
-void Server::QueueResponse(Connection* connection, std::string response) {
+void NetworkServer::Impl::QueueResponse(Connection* connection,
+                                        std::string response) {
   if (connection->write_offset >= connection->write_buffer.size()) {
     connection->write_buffer.clear();
     connection->write_offset = 0;
@@ -540,8 +643,8 @@ void Server::QueueResponse(Connection* connection, std::string response) {
   connection->last_activity = std::chrono::steady_clock::now();
 }
 
-Server::Connection* Server::FindConnection(IOThreadState* io_thread,
-                                           uint64_t connection_id) {
+NetworkServer::Impl::Connection* NetworkServer::Impl::FindConnection(
+    IOThreadState* io_thread, uint64_t connection_id) {
   for (auto& connection : io_thread->connections) {
     if (connection.id == connection_id) {
       return &connection;
@@ -556,24 +659,43 @@ Server::Connection* Server::FindConnection(IOThreadState* io_thread,
 
 namespace minikv {
 
-Server::Server(const Config& config, MiniKV* minikv)
-    : config_(config), minikv_(minikv) {}
+struct NetworkServer::Impl {
+  Impl(const Config&, MiniKV*) {}
 
-Server::~Server() = default;
+  rocksdb::Status Start() {
+    return rocksdb::Status::NotSupported("minikv_server is POSIX-only");
+  }
 
-rocksdb::Status Server::Start() {
-  return rocksdb::Status::NotSupported("minikv_server is POSIX-only");
+  void Stop() {}
+  void Wait() {}
+
+  rocksdb::Status Run() {
+    return rocksdb::Status::NotSupported("minikv_server is POSIX-only");
+  }
+
+  MetricsSnapshot GetMetricsSnapshot() const { return MetricsSnapshot{}; }
+
+  uint16_t bound_port = 0;
+};
+
+NetworkServer::NetworkServer(const Config& config, MiniKV* minikv)
+    : impl_(std::make_unique<Impl>(config, minikv)) {}
+
+NetworkServer::~NetworkServer() = default;
+
+rocksdb::Status NetworkServer::Start() { return impl_->Start(); }
+
+void NetworkServer::Stop() { impl_->Stop(); }
+
+void NetworkServer::Wait() { impl_->Wait(); }
+
+rocksdb::Status NetworkServer::Run() { return impl_->Run(); }
+
+uint16_t NetworkServer::port() const { return impl_->bound_port; }
+
+MetricsSnapshot NetworkServer::GetMetricsSnapshot() const {
+  return impl_->GetMetricsSnapshot();
 }
-
-void Server::Stop() {}
-
-void Server::Wait() {}
-
-rocksdb::Status Server::Run() {
-  return rocksdb::Status::NotSupported("minikv_server is POSIX-only");
-}
-
-MetricsSnapshot Server::GetMetricsSnapshot() const { return MetricsSnapshot{}; }
 
 }  // namespace minikv
 

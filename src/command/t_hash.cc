@@ -29,7 +29,7 @@ class HSetCmd : public Cmd {
     return rocksdb::Status::OK();
   }
 
-  CommandResponse Do(CommandContext* context) override {
+  CommandResponse Do(CommandServices* context) override {
     if (context == nullptr || context->hash_module == nullptr) {
       return MakeStatus(
           rocksdb::Status::InvalidArgument("hash module is unavailable"));
@@ -67,7 +67,7 @@ class HGetAllCmd : public Cmd {
     return rocksdb::Status::OK();
   }
 
-  CommandResponse Do(CommandContext* context) override {
+  CommandResponse Do(CommandServices* context) override {
     if (context == nullptr || context->hash_module == nullptr) {
       return MakeStatus(
           rocksdb::Status::InvalidArgument("hash module is unavailable"));
@@ -109,7 +109,7 @@ class HDelCmd : public Cmd {
     return rocksdb::Status::OK();
   }
 
-  CommandResponse Do(CommandContext* context) override {
+  CommandResponse Do(CommandServices* context) override {
     if (context == nullptr || context->hash_module == nullptr) {
       return MakeStatus(
           rocksdb::Status::InvalidArgument("hash module is unavailable"));

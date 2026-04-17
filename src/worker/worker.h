@@ -25,7 +25,7 @@ struct WorkerTask {
 
 class Worker {
  public:
-  Worker(CommandContext* context, KeyLockTable* key_lock_table,
+  Worker(CommandServices* context, KeyLockTable* key_lock_table,
          size_t queue_depth, size_t worker_id);
   ~Worker();
 
@@ -63,7 +63,7 @@ class Worker {
   CommandResponse ExecuteTask(WorkerTask* task);
   void Run();
 
-  CommandContext* context_;
+  CommandServices* context_;
   KeyLockTable* key_lock_table_;
   BoundedMPSCQueue queue_;
   size_t worker_id_;
@@ -73,7 +73,7 @@ class Worker {
   std::thread thread_;
 };
 
-CommandResponse ExecuteCommand(CommandContext* context,
+CommandResponse ExecuteCommand(CommandServices* context,
                                KeyLockTable* key_lock_table, Cmd* cmd);
 
 }  // namespace minikv

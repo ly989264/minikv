@@ -3,9 +3,9 @@
 #include <memory>
 #include <string>
 
-#include "minikv/config.h"
-#include "minikv/minikv.h"
-#include "server/server.h"
+#include "config.h"
+#include "minikv.h"
+#include "network/network_server.h"
 
 namespace {
 
@@ -50,7 +50,7 @@ int main(int argc, char** argv) {
     return 1;
   }
 
-  minikv::Server server(config, minikv.get());
+  minikv::NetworkServer server(config, minikv.get());
   status = server.Run();
   if (!status.ok()) {
     std::cerr << "server stopped with error: " << status.ToString() << "\n";

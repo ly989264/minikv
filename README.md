@@ -1,8 +1,8 @@
 # MiniKV
 
 `minikv` is a small Redis-like prototype built on RocksDB. It currently focuses
-on a narrow hash-only command surface and is maintained here as a standalone
-project under `cancer_redis/minikv`.
+on a narrow hash-only command surface, exposes a network-only runtime, and is
+maintained here as a standalone project under `cancer_redis/minikv`.
 
 ## Quick Start
 
@@ -35,7 +35,8 @@ refreshes the bundle when the source commit changed.
 
 ## Project Layout
 
-- `include/minikv/`: public headers
+- `src/config.h`, `src/minikv.h`, `src/network/network_server.h`: runtime and
+  network entry headers
 - `src/`: implementation
 - `tests/`: unit and integration tests
 - `tools/`: build, smoke, and maintenance scripts

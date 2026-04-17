@@ -3,8 +3,8 @@
 #include <string>
 #include <vector>
 
-#include "engine/key_codec.h"
-#include "minikv/command.h"
+#include "codec/key_codec.h"
+#include "types/hash/hash_module.h"
 #include "rocksdb/status.h"
 
 namespace minikv {

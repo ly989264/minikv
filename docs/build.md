@@ -146,7 +146,7 @@ docker exec <container> sh -lc '
 - `--max_request_bytes`
 - `--idle_timeout_ms`
 
-Defaults are defined in `include/minikv/config.h`.
+Defaults are defined in `src/config.h`.
 
 ## Validation Notes
 

@@ -9,7 +9,7 @@
 #include "gtest/gtest.h"
 #include "kernel/mutation_hook.h"
 #include "kernel/storage_engine.h"
-#include "minikv/config.h"
+#include "config.h"
 #include "rocksdb/db.h"
 #include "types/hash/hash_module.h"
 
@@ -78,7 +78,7 @@ class TestCmd : public minikv::Cmd {
     return rocksdb::Status::OK();
   }
 
-  minikv::CommandResponse Do(minikv::CommandContext* /*context*/) override {
+  minikv::CommandResponse Do(minikv::CommandServices* /*context*/) override {
     if (!status_to_return_.ok()) {
       return MakeStatus(std::move(status_to_return_));
     }
@@ -129,17 +129,10 @@ class CmdExecutionTest : public ::testing::Test {
     return cmd;
   }
 
-  std::unique_ptr<minikv::Cmd> CreateFromRequest(
-      const minikv::CommandRequest& request) {
-    std::unique_ptr<minikv::Cmd> cmd;
-    EXPECT_TRUE(minikv::CreateCmd(request, &cmd).ok());
-    return cmd;
-  }
-
   static inline int counter_ = 0;
   std::string db_path_;
   minikv::NoopMutationHook mutation_hook_;
-  minikv::CommandContext context_;
+  minikv::CommandServices context_;
   std::unique_ptr<minikv::StorageEngine> storage_engine_;
   std::unique_ptr<minikv::HashModule> hash_module_;
 };
@@ -175,7 +168,7 @@ TEST(CmdFactoryTest, ReturnsNullForUnknownRegistrations) {
   EXPECT_EQ(minikv::CmdFactory::FindByName("UNKNOWN"), nullptr);
 }
 
-TEST(CmdCreateTest, CreatesCommandsFromRespPartsAndRequests) {
+TEST(CmdCreateTest, CreatesCommandsFromRespParts) {
   std::unique_ptr<minikv::Cmd> ping;
   ASSERT_TRUE(minikv::CreateCmd({"PING"}, &ping).ok());
   ASSERT_NE(ping, nullptr);
@@ -184,10 +177,7 @@ TEST(CmdCreateTest, CreatesCommandsFromRespPartsAndRequests) {
   ExpectFlags(ping->Flags(), true, false, true, false);
 
   std::unique_ptr<minikv::Cmd> hset;
-  ASSERT_TRUE(minikv::CreateCmd(
-                  minikv::CommandRequest{minikv::CommandType::kHSet, "user:1",
-                                         {"name", "alice"}},
-                  &hset)
+  ASSERT_TRUE(minikv::CreateCmd({"HSET", "user:1", "name", "alice"}, &hset)
                   .ok());
   ASSERT_NE(hset, nullptr);
   EXPECT_EQ(hset->Name(), "HSET");
@@ -202,10 +192,6 @@ TEST(CmdCreateTest, CreatesCommandsFromRespPartsAndRequests) {
 
 TEST(CmdCreateTest, RejectsBadArgumentsAndNullOutputs) {
   EXPECT_TRUE(minikv::CreateCmd(std::vector<std::string>{"PING"}, nullptr)
-                  .IsInvalidArgument());
-  EXPECT_TRUE(minikv::CreateCmd(
-                  minikv::CommandRequest{minikv::CommandType::kPing, "", {}},
-                  nullptr)
                   .IsInvalidArgument());
 
   std::unique_ptr<minikv::Cmd> cmd;
@@ -241,12 +227,6 @@ TEST(CmdCreateTest, RejectsBadArgumentsAndNullOutputs) {
   ASSERT_TRUE(status.IsInvalidArgument());
   EXPECT_NE(status.ToString().find("PING takes no arguments"),
             std::string::npos);
-
-  status = minikv::CreateCmd(
-      minikv::CommandRequest{static_cast<minikv::CommandType>(999), "", {}},
-      &cmd);
-  ASSERT_TRUE(status.IsInvalidArgument());
-  EXPECT_NE(status.ToString().find("unknown command type"), std::string::npos);
 }
 
 TEST(CmdBaseTest, ExecuteRejectsUninitializedCommand) {
@@ -298,12 +278,9 @@ TEST(CmdBaseTest, SharedResponseBuildersProduceExpectedShapes) {
   ASSERT_TRUE(response.status.IsCorruption());
 }
 
-TEST(CmdCreateTest, CompatibilityRequestKeepsEmptyStringKeyForHashCommands) {
+TEST(CmdCreateTest, EmptyStringKeyRemainsValidForHashCommands) {
   std::unique_ptr<minikv::Cmd> cmd;
-  ASSERT_TRUE(minikv::CreateCmd(
-                  minikv::CommandRequest{minikv::CommandType::kHGetAll, "", {}},
-                  &cmd)
-                  .ok());
+  ASSERT_TRUE(minikv::CreateCmd({"HGETALL", ""}, &cmd).ok());
   ASSERT_NE(cmd, nullptr);
   EXPECT_EQ(cmd->RouteKey(), "");
   EXPECT_EQ(cmd->Name(), "HGETALL");
@@ -329,8 +306,7 @@ TEST_F(CmdExecutionTest, HSetAndHGetAllExecuteAgainstEngine) {
   EXPECT_EQ(response.reply.integer(), 1);
 
   std::unique_ptr<minikv::Cmd> set_update =
-      CreateFromRequest(minikv::CommandRequest{
-          minikv::CommandType::kHSet, "user:2", {"name", "alice-2"}});
+      CreateFromParts({"HSET", "user:2", "name", "alice-2"});
   ASSERT_NE(set_update, nullptr);
   response = set_update->Execute(&context_);
   ASSERT_TRUE(response.status.ok());

@@ -4,7 +4,7 @@
 #include <string>
 #include <vector>
 
-#include "minikv/command.h"
+#include "command/command_types.h"
 
 namespace minikv {
 

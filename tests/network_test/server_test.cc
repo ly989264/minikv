@@ -12,10 +12,10 @@
 #include <vector>
 
 #include "gtest/gtest.h"
-#include "minikv/config.h"
-#include "minikv/minikv.h"
+#include "config.h"
+#include "minikv.h"
+#include "network/network_server.h"
 #include "rocksdb/db.h"
-#include "server/server.h"
 
 namespace {
 
@@ -147,6 +147,21 @@ int ConnectToServer(uint16_t port) {
   return fd;
 }
 
+void SeedHashOverNetwork(uint16_t port, const std::string& key, int field_count,
+                         size_t value_size) {
+  const int fd = ConnectToServer(port);
+  const std::string value(value_size, 'v');
+  for (int i = 0; i < field_count; ++i) {
+    WriteAll(
+        fd,
+        EncodeCommand({"HSET", key, "field:" + std::to_string(i), value}));
+    RespValue reply = ReadRespValue(fd);
+    ASSERT_EQ(reply.type, RespValue::Type::kInteger);
+    ASSERT_EQ(reply.integer, 1);
+  }
+  close(fd);
+}
+
 class MiniKVServerTest : public ::testing::Test {
  protected:
   void SetUp() override {
@@ -163,7 +178,7 @@ class MiniKVServerTest : public ::testing::Test {
     config.worker_threads = 4;
     ASSERT_TRUE(minikv::MiniKV::Open(config, &kv_).ok());
 
-    server_ = std::make_unique<minikv::Server>(config, kv_.get());
+    server_ = std::make_unique<minikv::NetworkServer>(config, kv_.get());
     ASSERT_TRUE(server_->Start().ok());
     ASSERT_GT(server_->port(), 0);
   }
@@ -182,7 +197,7 @@ class MiniKVServerTest : public ::testing::Test {
   static inline int counter_ = 0;
   std::string db_path_;
   std::unique_ptr<minikv::MiniKV> kv_;
-  std::unique_ptr<minikv::Server> server_;
+  std::unique_ptr<minikv::NetworkServer> server_;
 };
 
 TEST_F(MiniKVServerTest, PingAndBasicHashLifecycle) {
@@ -322,11 +337,7 @@ TEST_F(MiniKVServerTest, RejectsOversizedRequest) {
 }
 
 TEST_F(MiniKVServerTest, PipelineResponsesStayInRequestOrderAcrossWorkers) {
-  for (int i = 0; i < 2048; ++i) {
-    ASSERT_TRUE(kv_->HSet("user:slow", "field:" + std::to_string(i),
-                         std::string(256, 'v'))
-                    .ok());
-  }
+  SeedHashOverNetwork(server_->port(), "user:slow", 2048, 256);
 
   const int fd = ConnectToServer(server_->port());
   WriteAll(fd, EncodeCommand({"HGETALL", "user:slow"}) + EncodeCommand({"PING"}));
@@ -343,11 +354,7 @@ TEST_F(MiniKVServerTest, PipelineResponsesStayInRequestOrderAcrossWorkers) {
 }
 
 TEST_F(MiniKVServerTest, StopDrainsInflightRequestsBeforeClosingConnection) {
-  for (int i = 0; i < 2048; ++i) {
-    ASSERT_TRUE(kv_->HSet("user:drain", "field:" + std::to_string(i),
-                         std::string(256, 'v'))
-                    .ok());
-  }
+  SeedHashOverNetwork(server_->port(), "user:drain", 2048, 256);
 
   const int fd = ConnectToServer(server_->port());
   SetRecvTimeout(fd, 2000);
@@ -374,11 +381,7 @@ TEST_F(MiniKVServerTest, StopDrainsInflightRequestsBeforeClosingConnection) {
 }
 
 TEST_F(MiniKVServerTest, SlowCommandOnOneKeyDoesNotBlockFastCommandOnOtherKey) {
-  for (int i = 0; i < 4096; ++i) {
-    ASSERT_TRUE(kv_->HSet("user:slow-cmd", "field:" + std::to_string(i),
-                         std::string(256, 'v'))
-                    .ok());
-  }
+  SeedHashOverNetwork(server_->port(), "user:slow-cmd", 4096, 256);
 
   const int slow_fd = ConnectToServer(server_->port());
   const int fast_fd = ConnectToServer(server_->port());
@@ -461,16 +464,10 @@ TEST(MiniKVServerIsolationTest, SlowClientDoesNotBlockOtherConnections) {
   std::unique_ptr<minikv::MiniKV> kv;
   ASSERT_TRUE(minikv::MiniKV::Open(config, &kv).ok());
 
-  const std::string large_value(4096, 'v');
-  for (int i = 0; i < 512; ++i) {
-    ASSERT_TRUE(kv->HSet("user:slow", "field:" + std::to_string(i),
-                         large_value)
-                    .ok());
-  }
-
-  minikv::Server server(config, kv.get());
+  minikv::NetworkServer server(config, kv.get());
   ASSERT_TRUE(server.Start().ok());
   ASSERT_GT(server.port(), 0);
+  SeedHashOverNetwork(server.port(), "user:slow", 512, 4096);
 
   const int slow_fd = ConnectToServer(server.port());
   const int small_buffer = 1024;

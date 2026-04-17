@@ -68,7 +68,7 @@ size_t Worker::BoundedMPSCQueue::Backlog() const {
   return head - tail;
 }
 
-Worker::Worker(CommandContext* context, KeyLockTable* key_lock_table,
+Worker::Worker(CommandServices* context, KeyLockTable* key_lock_table,
                size_t queue_depth, size_t worker_id)
     : context_(context),
       key_lock_table_(key_lock_table),
@@ -97,7 +97,7 @@ bool Worker::Enqueue(WorkerTask* task) {
 
 size_t Worker::backlog() const { return queue_.Backlog(); }
 
-CommandResponse ExecuteCommand(CommandContext* context,
+CommandResponse ExecuteCommand(CommandServices* context,
                                KeyLockTable* key_lock_table, Cmd* cmd) {
   KeyLockTable::Guard guard;
   if (key_lock_table != nullptr) {

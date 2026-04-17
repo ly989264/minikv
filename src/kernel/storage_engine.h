@@ -4,7 +4,7 @@
 #include <string>
 #include <vector>
 
-#include "minikv/config.h"
+#include "config.h"
 #include "rocksdb/db.h"
 #include "rocksdb/options.h"
 #include "rocksdb/status.h"

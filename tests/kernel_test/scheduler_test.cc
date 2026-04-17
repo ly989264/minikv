@@ -51,7 +51,7 @@ class BlockingCmd : public minikv::Cmd {
     return rocksdb::Status::OK();
   }
 
-  minikv::CommandResponse Do(minikv::CommandContext* /*context*/) override {
+  minikv::CommandResponse Do(minikv::CommandServices* /*context*/) override {
     {
       std::lock_guard<std::mutex> lock(tracker_->mutex);
       gate_->entered = true;
@@ -110,7 +110,7 @@ class QuickCmd : public minikv::Cmd {
     return rocksdb::Status::OK();
   }
 
-  minikv::CommandResponse Do(minikv::CommandContext* /*context*/) override {
+  minikv::CommandResponse Do(minikv::CommandServices* /*context*/) override {
     return MakeSimpleString("OK");
   }
 

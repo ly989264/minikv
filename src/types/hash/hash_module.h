@@ -1,15 +1,20 @@
 #pragma once
 
+#include <cstdint>
 #include <string>
 #include <vector>
 
-#include "minikv/command.h"
 #include "rocksdb/status.h"
 
 namespace minikv {
 
 class MutationHook;
 class StorageEngine;
+
+struct FieldValue {
+  std::string field;
+  std::string value;
+};
 
 class HashModule {
  public:

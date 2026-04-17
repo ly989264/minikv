@@ -3,7 +3,7 @@
 #include <memory>
 #include <utility>
 
-#include "engine/key_codec.h"
+#include "codec/key_codec.h"
 #include "kernel/mutation_hook.h"
 #include "kernel/snapshot.h"
 #include "kernel/storage_engine.h"

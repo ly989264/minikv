@@ -7,7 +7,7 @@
 #include <memory>
 #include <vector>
 
-#include "server/metrics.h"
+#include "network/network_server.h"
 #include "worker/key_lock_table.h"
 #include "worker/worker.h"
 
@@ -17,7 +17,7 @@ class Scheduler {
  public:
   using Completion = WorkerTask::Completion;
 
-  Scheduler(CommandContext* context, size_t worker_count,
+  Scheduler(CommandServices* context, size_t worker_count,
             size_t max_queue_depth);
   ~Scheduler() = default;
 
@@ -25,7 +25,6 @@ class Scheduler {
   Scheduler& operator=(const Scheduler&) = delete;
 
   rocksdb::Status Submit(std::unique_ptr<Cmd> cmd, Completion completion);
-  CommandResponse ExecuteInline(std::unique_ptr<Cmd> cmd);
 
   uint64_t rejected_requests() const {
     return rejected_requests_.load(std::memory_order_relaxed);
@@ -37,7 +36,7 @@ class Scheduler {
   MetricsSnapshot GetMetricsSnapshot() const;
 
  private:
-  CommandContext* context_;
+  CommandServices* context_;
   KeyLockTable key_lock_table_;
   std::vector<std::unique_ptr<Worker>> workers_;
   std::atomic<size_t> next_worker_{0};

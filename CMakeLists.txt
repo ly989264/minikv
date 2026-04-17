@@ -35,31 +35,29 @@ function(minikv_apply_runtime_path target)
   endif()
 endfunction()
 
-set(MINIKV_PUBLIC_HEADERS
-  include/minikv/command.h
-  include/minikv/config.h
-  include/minikv/minikv.h
-  include/minikv/reply.h)
+set(MINIKV_RUNTIME_HEADERS
+  src/config.h
+  src/minikv.h
+  src/network/network_server.h)
 
 set(MINIKV_INTERNAL_HEADERS
+  src/command/command_types.h
   src/command/cmd.h
   src/command/cmd_create.h
   src/command/cmd_factory.h
   src/command/t_hash.h
   src/command/t_kv.h
   src/common/thread_name.h
-  src/engine/db_engine.h
-  src/engine/key_codec.h
+  src/codec/key_codec.h
   src/kernel/command_registry.h
   src/kernel/mutation_hook.h
   src/kernel/reply.h
+  src/kernel/reply_node.h
   src/kernel/scheduler.h
   src/kernel/snapshot.h
   src/kernel/storage_engine.h
   src/kernel/write_context.h
-  src/server/metrics.h
-  src/server/resp_parser.h
-  src/server/server.h
+  src/network/resp_parser.h
   src/types/hash/hash_module.h
   src/worker/key_lock_table.h
   src/worker/worker.h)
@@ -71,31 +69,27 @@ set(MINIKV_SOURCES
   src/command/t_hash.cc
   src/command/t_kv.cc
   src/common/thread_name.cc
-  src/engine/db_engine.cc
-  src/engine/key_codec.cc
+  src/codec/key_codec.cc
   src/kernel/command_registry.cc
   src/kernel/reply.cc
   src/kernel/scheduler.cc
   src/kernel/snapshot.cc
   src/kernel/storage_engine.cc
   src/kernel/write_context.cc
-  src/server/resp_parser.cc
-  src/server/server.cc
+  src/network/network_server.cc
+  src/network/resp_parser.cc
   src/types/hash/hash_module.cc
   src/worker/key_lock_table.cc
   src/worker/worker.cc
   src/minikv.cc)
 
 add_library(minikv_core STATIC
-  ${MINIKV_PUBLIC_HEADERS}
+  ${MINIKV_RUNTIME_HEADERS}
   ${MINIKV_INTERNAL_HEADERS}
   ${MINIKV_SOURCES})
 
 target_include_directories(minikv_core
   PUBLIC
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
-  PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
 target_compile_features(minikv_core PUBLIC cxx_std_17)
@@ -128,11 +122,10 @@ if(BUILD_TESTING)
   minikv_add_test(minikv_cmd_test tests/command_test/cmd_test.cc)
   minikv_add_test(minikv_command_registry_test
     tests/command_test/command_registry_test.cc)
-  minikv_add_test(minikv_hash_test tests/command_test/hash_command_test.cc)
   minikv_add_test(minikv_hash_module_test tests/type_test/hash_module_test.cc)
-  minikv_add_test(minikv_server_test tests/server_test/server_test.cc)
+  minikv_add_test(minikv_network_test tests/network_test/server_test.cc)
   minikv_add_test(minikv_reply_encode_test
-    tests/server_test/reply_encode_test.cc)
+    tests/network_test/reply_encode_test.cc)
   minikv_add_test(minikv_scheduler_test tests/kernel_test/scheduler_test.cc)
   minikv_add_test(minikv_snapshot_test tests/kernel_test/snapshot_test.cc)
 endif()

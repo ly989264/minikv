@@ -16,7 +16,7 @@ rocksdb::Status Cmd::Init(const CmdInput& input) {
   return status;
 }
 
-CommandResponse Cmd::Execute(CommandContext* context) {
+CommandResponse Cmd::Execute(CommandServices* context) {
   if (!initialized_) {
     return MakeStatus(rocksdb::Status::InvalidArgument(
         "command must be initialized before execution"));

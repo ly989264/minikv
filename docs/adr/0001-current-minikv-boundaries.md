@@ -45,7 +45,7 @@ Execution routing rules today:
 
 - each accepted connection is assigned to one I/O thread
 - parsed requests are converted into `Cmd` instances on that I/O thread
-- both embedded and server paths submit work into one shared `Scheduler`
+- the network path submits work into one shared `Scheduler`
 - worker selection is queue-oriented round-robin with probing for a queue that
   still has capacity
 - same-key serialization depends on `KeyLockTable`, which locks by a striped
@@ -54,7 +54,8 @@ Execution routing rules today:
   sequence before writing to the socket
 
 This means socket progress and command execution remain separated, but there is
-no longer a duplicated runtime structure between `MiniKV` and `Server`.
+no longer a duplicated runtime structure between `MiniKV` and
+`NetworkServer`.
 
 ## Current Response Model
 
@@ -119,9 +120,6 @@ Current behavior is limited to hash operations:
 - `HDEL` reads metadata and field existence through one `Snapshot`, deletes
   existing field keys and updates or removes metadata through one
   `WriteContext`, and passes through the mutation hook call site before commit
-
-`src/engine/db_engine.h` remains only as a compatibility alias to
-`StorageEngine`.
 
 ## Current Non-Supported Items
 

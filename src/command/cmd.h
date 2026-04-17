@@ -5,7 +5,7 @@
 #include <utility>
 #include <vector>
 
-#include "minikv/command.h"
+#include "command/command_types.h"
 #include "rocksdb/status.h"
 
 namespace minikv {
@@ -13,7 +13,7 @@ namespace minikv {
 class HashModule;
 class StorageEngine;
 
-struct CommandContext {
+struct CommandServices {
   StorageEngine* storage_engine = nullptr;
   HashModule* hash_module = nullptr;
 };
@@ -56,7 +56,7 @@ class Cmd {
   virtual ~Cmd() = default;
 
   rocksdb::Status Init(const CmdInput& input);
-  CommandResponse Execute(CommandContext* context);
+  CommandResponse Execute(CommandServices* services);
 
   const std::string& Name() const { return name_; }
   CmdFlags Flags() const { return flags_; }
@@ -79,7 +79,7 @@ class Cmd {
 
  private:
   virtual rocksdb::Status DoInitial(const CmdInput& input) = 0;
-  virtual CommandResponse Do(CommandContext* context) = 0;
+  virtual CommandResponse Do(CommandServices* services) = 0;
 
   std::string name_;
   CmdFlags flags_;
