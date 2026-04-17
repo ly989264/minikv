@@ -6,7 +6,7 @@ maintained here as a standalone project under `cancer_redis/minikv`.
 
 ## Quick Start
 
-Build with the committed RocksDB bundle if it is present:
+Build with the committed RocksDB bundle and vendored googletest:
 
 ```bash
 ./tools/build_linux.sh

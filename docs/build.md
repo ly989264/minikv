@@ -30,14 +30,17 @@ Default dependency mode prefers the committed RocksDB bundle:
 
 - `MINIKV_USE_BUNDLED_ROCKSDB=ON`
 - `MINIKV_ROCKSDB_BUNDLE_DIR=third_party/rocksdb/linux-x86_64`
-- `MINIKV_FETCH_DEPS=ON`
-- `MINIKV_FETCH_GTEST=ON`
+- `MINIKV_FETCH_DEPS=OFF` when the bundle is complete
+- `MINIKV_GTEST_SOURCE_DIR=third_party/googletest`
+- `MINIKV_FETCH_GTEST=OFF` when the vendored googletest tree is present
 - `MINIKV_ROCKSDB_TAG=v11.0.4`
 - `MINIKV_GTEST_TAG=v1.14.0`
 
 When the bundle is present, `minikv` links against the committed
 `third_party/rocksdb/linux-x86_64/lib/librocksdb.so` and uses the committed
-headers under `third_party/rocksdb/linux-x86_64/include/rocksdb`.
+headers under `third_party/rocksdb/linux-x86_64/include/rocksdb`. Tests prefer
+the vendored googletest tree under `third_party/googletest/` and only fall back
+to `FetchContent` when that tree is unavailable.
 
 If the bundle is missing, CMake falls back to either:
 

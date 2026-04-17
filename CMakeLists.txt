@@ -16,6 +16,9 @@ set(MINIKV_GTEST_TAG "v1.14.0" CACHE STRING
     "Pinned googletest tag used when MINIKV_FETCH_DEPS is enabled")
 set(MINIKV_ROCKSDB_SOURCE_DIR "" CACHE PATH
     "Optional local RocksDB source tree used instead of fetching RocksDB")
+set(MINIKV_GTEST_SOURCE_DIR
+    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/googletest"
+    CACHE PATH "Optional local googletest source tree used instead of fetching googletest")
 set(MINIKV_ROCKSDB_BUNDLE_DIR
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/rocksdb/linux-x86_64"
     CACHE PATH "Path to a committed RocksDB bundle (headers + shared library)")

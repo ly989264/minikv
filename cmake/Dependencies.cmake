@@ -82,9 +82,25 @@ function(minikv_enable_gtest)
     return()
   endif()
 
+  if(MINIKV_GTEST_SOURCE_DIR)
+    get_filename_component(minikv_gtest_source
+      "${MINIKV_GTEST_SOURCE_DIR}" ABSOLUTE)
+    if(EXISTS "${minikv_gtest_source}/CMakeLists.txt")
+      set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
+      set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
+      add_subdirectory("${minikv_gtest_source}"
+        "${CMAKE_BINARY_DIR}/_deps/googletest-build" EXCLUDE_FROM_ALL)
+      return()
+    elseif(NOT MINIKV_FETCH_GTEST)
+      message(FATAL_ERROR
+        "MINIKV_GTEST_SOURCE_DIR does not point to a googletest source tree: "
+        "${minikv_gtest_source}")
+    endif()
+  endif()
+
   if(NOT MINIKV_FETCH_GTEST)
     message(FATAL_ERROR
-      "BUILD_TESTING requires MINIKV_FETCH_GTEST=ON so googletest can be fetched.")
+      "BUILD_TESTING requires a vendored googletest tree or MINIKV_FETCH_GTEST=ON.")
   endif()
 
   set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)

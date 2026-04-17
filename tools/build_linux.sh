@@ -9,6 +9,7 @@ JOBS="${JOBS:-}"
 ROCKSDB_SOURCE_DIR=""
 ROCKSDB_REUSE_BUILD_DIR=""
 BUNDLE_DIR="${REPO_ROOT}/third_party/rocksdb/linux-x86_64"
+GTEST_DIR="${REPO_ROOT}/third_party/googletest"
 SKIP_TESTS=0
 FORCE_BUNDLE_REFRESH=0
 
@@ -99,19 +100,49 @@ if [[ -n "${ROCKSDB_SOURCE_DIR}" ]]; then
   "${REPO_ROOT}/tools/sync_rocksdb_bundle.sh" "${sync_args[@]}"
 fi
 
+bundle_include="${BUNDLE_DIR}/include/rocksdb/db.h"
+bundle_lib="${BUNDLE_DIR}/lib/librocksdb.so"
+bundle_manifest="${BUNDLE_DIR}/BUNDLE_INFO.env"
+bundle_ready=0
+if [[ -f "${bundle_include}" && -f "${bundle_lib}" ]]; then
+  bundle_ready=1
+fi
+
+if [[ "${bundle_ready}" -eq 0 && -f "${bundle_manifest}" && -z "${ROCKSDB_SOURCE_DIR}" ]]; then
+  cat >&2 <<EOF
+bundled RocksDB is incomplete in ${BUNDLE_DIR}
+expected:
+  ${bundle_include}
+  ${bundle_lib}
+
+This build entrypoint is intended to work offline. Refresh the committed bundle
+with ./tools/sync_rocksdb_bundle.sh from a local RocksDB checkout and commit the
+resulting lib/ files together with BUNDLE_INFO.env.
+EOF
+  exit 1
+fi
+
 cmake_args=(
   -S "${REPO_ROOT}"
   -B "${BUILD_DIR}"
   -DCMAKE_BUILD_TYPE="${BUILD_TYPE}"
 )
 
-if [[ -f "${BUNDLE_DIR}/BUNDLE_INFO.env" ]]; then
+if [[ "${bundle_ready}" -eq 1 ]]; then
   cmake_args+=(
     "-DMINIKV_USE_BUNDLED_ROCKSDB=ON"
     "-DMINIKV_ROCKSDB_BUNDLE_DIR=${BUNDLE_DIR}"
+    "-DMINIKV_FETCH_DEPS=OFF"
   )
 elif [[ -n "${ROCKSDB_SOURCE_DIR}" ]]; then
   cmake_args+=("-DMINIKV_ROCKSDB_SOURCE_DIR=${ROCKSDB_SOURCE_DIR}")
+fi
+
+if [[ -f "${GTEST_DIR}/CMakeLists.txt" ]]; then
+  cmake_args+=(
+    "-DMINIKV_GTEST_SOURCE_DIR=${GTEST_DIR}"
+    "-DMINIKV_FETCH_GTEST=OFF"
+  )
 fi
 
 cmake "${cmake_args[@]}"
