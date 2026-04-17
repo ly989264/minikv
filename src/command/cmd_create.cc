@@ -4,8 +4,6 @@
 #include <utility>
 #include <vector>
 
-#include "command/cmd_factory.h"
-
 namespace minikv {
 namespace {
 
@@ -38,7 +36,8 @@ CmdInput MakeInput(const std::vector<std::string>& parts) {
 
 }  // namespace
 
-rocksdb::Status CreateCmd(const std::vector<std::string>& parts,
+rocksdb::Status CreateCmd(const CommandRegistry& registry,
+                          const std::vector<std::string>& parts,
                           std::unique_ptr<Cmd>* cmd) {
   if (cmd == nullptr) {
     return rocksdb::Status::InvalidArgument("cmd output is required");
@@ -49,7 +48,7 @@ rocksdb::Status CreateCmd(const std::vector<std::string>& parts,
   }
 
   const CmdRegistration* registration =
-      CmdFactory::FindByName(NormalizeCommandName(parts[0]));
+      registry.Find(NormalizeCommandName(parts[0]));
   if (registration == nullptr) {
     return rocksdb::Status::InvalidArgument("unsupported command");
   }

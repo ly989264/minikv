@@ -5,15 +5,13 @@
 
 namespace minikv {
 
-Scheduler::Scheduler(CommandServices* context, size_t worker_count,
-                     size_t max_queue_depth)
-    : context_(context),
-      key_lock_table_(KeyLockTable::DefaultStripeCount(worker_count)) {
+Scheduler::Scheduler(size_t worker_count, size_t max_queue_depth)
+    : key_lock_table_(KeyLockTable::DefaultStripeCount(worker_count)) {
   const size_t normalized_worker_count = std::max<size_t>(1, worker_count);
   workers_.reserve(normalized_worker_count);
   for (size_t i = 0; i < normalized_worker_count; ++i) {
     workers_.push_back(
-        std::make_unique<Worker>(context_, &key_lock_table_, max_queue_depth, i));
+        std::make_unique<Worker>(&key_lock_table_, max_queue_depth, i));
   }
 }
 

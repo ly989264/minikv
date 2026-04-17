@@ -558,7 +558,8 @@ bool NetworkServer::Impl::HandleReadable(size_t io_thread_id,
       }
 
       std::unique_ptr<Cmd> cmd;
-      rocksdb::Status status = CreateCmd(parts, &cmd);
+      rocksdb::Status status =
+          CreateCmd(minikv->command_registry(), parts, &cmd);
       if (!status.ok()) {
         QueueResponse(connection, EncodeError("ERR " + status.ToString()));
         continue;

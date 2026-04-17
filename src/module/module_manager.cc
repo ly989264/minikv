@@ -1,0 +1,96 @@
+#include "module/module_manager.h"
+
+#include <utility>
+
+namespace minikv {
+
+namespace {
+
+ModuleServices MakeServices(StorageEngine* storage_engine, Scheduler* scheduler,
+                            CommandRegistry* registry,
+                            std::shared_ptr<ModuleMetricsStore> metrics_store,
+                            std::string module_name,
+                            const bool* registration_open) {
+  ModuleNamespace command_namespace(module_name);
+  ModuleNamespace services_namespace(module_name);
+  ModuleNamespace metrics_namespace(std::move(module_name));
+  return ModuleServices(ModuleCommandRegistry(registry,
+                                             std::move(command_namespace),
+                                             registration_open),
+                        ModuleStorage(storage_engine),
+                        ModuleSnapshotService(storage_engine),
+                        ModuleSchedulerView(scheduler),
+                        std::move(services_namespace),
+                        ModuleMetrics(std::move(metrics_namespace),
+                                      std::move(metrics_store)));
+}
+
+}  // namespace
+
+ModuleManager::ModuleManager(StorageEngine* storage_engine, Scheduler* scheduler,
+                             std::vector<std::unique_ptr<Module>> modules)
+    : metrics_store_(std::make_shared<ModuleMetricsStore>()) {
+  modules_.reserve(modules.size());
+  for (auto& module : modules) {
+    const std::string module_name =
+        module != nullptr ? std::string(module->Name()) : std::string();
+    modules_.emplace_back(std::move(module),
+                          MakeServices(storage_engine, scheduler,
+                                       &command_registry_, metrics_store_,
+                                       module_name, &registration_open_));
+  }
+}
+
+ModuleManager::~ModuleManager() { StopAll(); }
+
+rocksdb::Status ModuleManager::Initialize() {
+  if (initialized_) {
+    return rocksdb::Status::InvalidArgument("modules already initialized");
+  }
+
+  for (auto& slot : modules_) {
+    registration_open_ = true;
+    rocksdb::Status status = slot.module->OnLoad(slot.services);
+    registration_open_ = false;
+    if (!status.ok()) {
+      StopLoadedModules();
+      return status;
+    }
+    slot.loaded = true;
+  }
+
+  for (auto& slot : modules_) {
+    rocksdb::Status status = slot.module->OnStart(slot.services);
+    if (!status.ok()) {
+      StopLoadedModules();
+      return status;
+    }
+    slot.started = true;
+  }
+
+  initialized_ = true;
+  return rocksdb::Status::OK();
+}
+
+void ModuleManager::StopAll() {
+  if (!initialized_) {
+    StopLoadedModules();
+    return;
+  }
+  StopLoadedModules();
+  initialized_ = false;
+}
+
+void ModuleManager::StopLoadedModules() {
+  registration_open_ = false;
+  for (auto it = modules_.rbegin(); it != modules_.rend(); ++it) {
+    if (!it->loaded) {
+      continue;
+    }
+    it->module->OnStop(it->services);
+    it->started = false;
+    it->loaded = false;
+  }
+}
+
+}  // namespace minikv

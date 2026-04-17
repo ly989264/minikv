@@ -1,0 +1,180 @@
+#include <memory>
+#include <string>
+#include <vector>
+
+#include "command/cmd.h"
+#include "gtest/gtest.h"
+#include "kernel/scheduler.h"
+#include "module/module_manager.h"
+#include "modules/core/core_module.h"
+#include "modules/hash/hash_module.h"
+
+namespace {
+
+class DummyCmd : public minikv::Cmd {
+ public:
+  explicit DummyCmd(const minikv::CmdRegistration& registration)
+      : minikv::Cmd(registration.name, registration.flags) {}
+
+ private:
+  rocksdb::Status DoInitial(const minikv::CmdInput& /*input*/) override {
+    return rocksdb::Status::OK();
+  }
+
+  minikv::CommandResponse Do() override { return MakeSimpleString("OK"); }
+};
+
+std::unique_ptr<minikv::Cmd> CreateDummyCmd(
+    const minikv::CmdRegistration& registration) {
+  return std::make_unique<DummyCmd>(registration);
+}
+
+class RecordingModule : public minikv::Module {
+ public:
+  RecordingModule(std::string name, std::string command_name,
+                  std::vector<std::string>* events, bool fail_load = false,
+                  bool fail_start = false)
+      : name_(std::move(name)),
+        command_name_(std::move(command_name)),
+        events_(events),
+        fail_load_(fail_load),
+        fail_start_(fail_start) {}
+
+  std::string_view Name() const override { return name_; }
+
+  rocksdb::Status OnLoad(minikv::ModuleServices& services) override {
+    events_->push_back(name_ + ".load");
+    if (!command_name_.empty()) {
+      rocksdb::Status status = services.command_registry().Register(
+          {command_name_, minikv::CmdFlags::kRead, minikv::CommandSource::kBuiltin,
+           "", &CreateDummyCmd});
+      if (!status.ok()) {
+        return status;
+      }
+    }
+    if (fail_load_) {
+      return rocksdb::Status::InvalidArgument("forced load failure for " + name_);
+    }
+    return rocksdb::Status::OK();
+  }
+
+  rocksdb::Status OnStart(minikv::ModuleServices& services) override {
+    events_->push_back(name_ + ".start");
+    services.metrics().IncrementCounter("starts");
+    if (fail_start_) {
+      return rocksdb::Status::Aborted("forced start failure for " + name_);
+    }
+    return rocksdb::Status::OK();
+  }
+
+  void OnStop(minikv::ModuleServices& /*services*/) override {
+    events_->push_back(name_ + ".stop");
+  }
+
+ private:
+  std::string name_;
+  std::string command_name_;
+  std::vector<std::string>* events_ = nullptr;
+  bool fail_load_ = false;
+  bool fail_start_ = false;
+};
+
+TEST(ModuleManagerTest, InitializeLoadsStartsAndStopsInReverseOrder) {
+  std::vector<std::string> events;
+  std::vector<std::unique_ptr<minikv::Module>> modules;
+  modules.push_back(
+      std::make_unique<RecordingModule>("alpha", "ALPHA", &events));
+  modules.push_back(std::make_unique<RecordingModule>("beta", "BETA", &events));
+
+  minikv::Scheduler scheduler(1, 8);
+  minikv::ModuleManager manager(nullptr, &scheduler, std::move(modules));
+  ASSERT_TRUE(manager.Initialize().ok());
+  ASSERT_NE(manager.command_registry().Find("ALPHA"), nullptr);
+  ASSERT_NE(manager.command_registry().Find("BETA"), nullptr);
+
+  manager.StopAll();
+  EXPECT_EQ(events, (std::vector<std::string>{"alpha.load", "beta.load",
+                                              "alpha.start", "beta.start",
+                                              "beta.stop", "alpha.stop"}));
+}
+
+TEST(ModuleManagerTest, LoadFailureStopsPreviouslyLoadedModules) {
+  std::vector<std::string> events;
+  std::vector<std::unique_ptr<minikv::Module>> modules;
+  modules.push_back(
+      std::make_unique<RecordingModule>("alpha", "ALPHA", &events));
+  modules.push_back(std::make_unique<RecordingModule>("broken", "", &events, true));
+
+  minikv::Scheduler scheduler(1, 8);
+  minikv::ModuleManager manager(nullptr, &scheduler, std::move(modules));
+  rocksdb::Status status = manager.Initialize();
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("broken"), std::string::npos);
+  EXPECT_EQ(events, (std::vector<std::string>{"alpha.load", "broken.load",
+                                              "alpha.stop"}));
+}
+
+TEST(ModuleManagerTest, StartFailureStopsLoadedModulesInReverseOrder) {
+  std::vector<std::string> events;
+  std::vector<std::unique_ptr<minikv::Module>> modules;
+  modules.push_back(
+      std::make_unique<RecordingModule>("alpha", "ALPHA", &events));
+  modules.push_back(std::make_unique<RecordingModule>("beta", "BETA", &events,
+                                                      false, true));
+
+  minikv::Scheduler scheduler(1, 8);
+  minikv::ModuleManager manager(nullptr, &scheduler, std::move(modules));
+  rocksdb::Status status = manager.Initialize();
+  ASSERT_TRUE(status.IsAborted());
+  EXPECT_NE(status.ToString().find("beta"), std::string::npos);
+  EXPECT_EQ(events, (std::vector<std::string>{"alpha.load", "beta.load",
+                                              "alpha.start", "beta.start",
+                                              "beta.stop", "alpha.stop"}));
+}
+
+TEST(ModuleManagerTest, RejectsCommandNameConflictsDuringLoad) {
+  std::vector<std::string> events;
+  std::vector<std::unique_ptr<minikv::Module>> modules;
+  modules.push_back(std::make_unique<RecordingModule>("core", "ping", &events));
+  modules.push_back(std::make_unique<RecordingModule>("hash", "PING", &events));
+
+  minikv::Scheduler scheduler(1, 8);
+  minikv::ModuleManager manager(nullptr, &scheduler, std::move(modules));
+  rocksdb::Status status = manager.Initialize();
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("PING"), std::string::npos);
+  EXPECT_NE(status.ToString().find("core"), std::string::npos);
+  EXPECT_NE(status.ToString().find("hash"), std::string::npos);
+}
+
+TEST(ModuleManagerTest, BuiltinModulesLoadIntoUnifiedRegistry) {
+  std::vector<std::unique_ptr<minikv::Module>> modules;
+  modules.push_back(std::make_unique<minikv::CoreModule>());
+  modules.push_back(std::make_unique<minikv::HashModule>());
+
+  minikv::Scheduler scheduler(2, 16);
+  minikv::ModuleManager manager(nullptr, &scheduler, std::move(modules));
+  ASSERT_TRUE(manager.Initialize().ok());
+
+  const minikv::CmdRegistration* ping = manager.command_registry().Find("PING");
+  const minikv::CmdRegistration* hset = manager.command_registry().Find("HSET");
+  const minikv::CmdRegistration* hgetall =
+      manager.command_registry().Find("HGETALL");
+  const minikv::CmdRegistration* hdel = manager.command_registry().Find("HDEL");
+
+  ASSERT_NE(ping, nullptr);
+  ASSERT_NE(hset, nullptr);
+  ASSERT_NE(hgetall, nullptr);
+  ASSERT_NE(hdel, nullptr);
+  EXPECT_EQ(ping->owner_module, "core");
+  EXPECT_EQ(hset->owner_module, "hash");
+  EXPECT_EQ(hgetall->owner_module, "hash");
+  EXPECT_EQ(hdel->owner_module, "hash");
+}
+
+}  // namespace
+
+int main(int argc, char** argv) {
+  ::testing::InitGoogleTest(&argc, argv);
+  return RUN_ALL_TESTS();
+}

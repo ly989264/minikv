@@ -15,11 +15,11 @@ targets:
 - `minikv_server`
 - `minikv_cmd_test`
 - `minikv_command_registry_test`
-- `minikv_hash_test`
 - `minikv_hash_module_test`
+- `minikv_module_manager_test`
+- `minikv_network_test`
 - `minikv_reply_encode_test`
 - `minikv_scheduler_test`
-- `minikv_server_test`
 - `minikv_snapshot_test`
 
 All targets build as C++17.

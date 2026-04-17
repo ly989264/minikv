@@ -33,7 +33,7 @@ serialization, not by RocksDB transactions or multi-key locking.
 
 Current hash reads now use RocksDB snapshots:
 
-- `HashModule::ReadAll()` acquires one `Snapshot`
+- `HashModule::ReadAll()` acquires one `ModuleSnapshot`
 - metadata lookup and `hash` prefix scan share that same snapshot handle
 - modules do not reach directly for raw iterators
 
@@ -46,12 +46,11 @@ This is still not general snapshot isolation:
 - no cross-key read transaction exists
 - the public API does not expose long-lived snapshots
 
-### Writes Use `WriteContext` But Still Depend On Same-Key Serialization
+### Writes Use `ModuleWriteBatch` But Still Depend On Same-Key Serialization
 
-Current writes are grouped by one logical `WriteContext`:
+Current writes are grouped by one logical `ModuleWriteBatch`:
 
 - `HSET` and `HDEL` build one `rocksdb::WriteBatch` per logical mutation
-- mutation hooks, if any, must append into that same batch
 - the batch is committed once after the logical mutation is fully prepared
 
 This does not remove the need for keyed serialization:
@@ -71,18 +70,13 @@ Operationally:
 - there is no mechanism for atomically reading or updating multiple keys
 - any future multi-key command would need an explicit new execution contract
 
-### `MutationHook` Is An Empty Extension Point
+### Module SPI Is Builtin-Only
 
-The write path now has a formal mutation hook interface:
+The current module SPI is intentionally narrow:
 
-- `HashMutation` describes logical hash updates
-- `MutationHook::OnHashMutation()` receives both the mutation and the active
-  `WriteContext`
-
-Current behavior:
-
-- the only implementation is `NoopMutationHook`
-- no Search, module, or `FT.*` behavior is attached yet
+- `CoreModule` and `HashModule` are builtin modules loaded by `ModuleManager`
+- commands are registered during `OnLoad()` into one runtime registry
+- there is no external ABI or dynamic module loading
 
 ### `version` And `expire_at_ms` Are Still Reserved Fields Only
 
@@ -106,6 +100,7 @@ consistency boundary remains intentionally narrow:
 - logical hash reads use one snapshot across `meta` and `hash`
 - writes use one write batch per logical mutation
 - multi-key atomicity does not exist
+- modules are builtin-only in the current implementation
 - reserved metadata fields must not be documented as active semantics
 
 Any future expansion beyond the current single-key hash path should update this

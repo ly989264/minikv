@@ -4,21 +4,19 @@
 #include <string>
 #include <vector>
 
-#include "rocksdb/status.h"
+#include "module/module.h"
+#include "modules/hash/hash_types.h"
 
 namespace minikv {
 
-class MutationHook;
-class StorageEngine;
+class ModuleServices;
 
-struct FieldValue {
-  std::string field;
-  std::string value;
-};
-
-class HashModule {
+class HashModule : public Module {
  public:
-  HashModule(StorageEngine* storage_engine, MutationHook* mutation_hook);
+  std::string_view Name() const override { return "hash"; }
+  rocksdb::Status OnLoad(ModuleServices& services) override;
+  rocksdb::Status OnStart(ModuleServices& services) override;
+  void OnStop(ModuleServices& services) override;
 
   rocksdb::Status PutField(const std::string& key, const std::string& field,
                            const std::string& value, bool* inserted);
@@ -29,8 +27,10 @@ class HashModule {
                                uint64_t* deleted);
 
  private:
-  StorageEngine* storage_engine_;
-  MutationHook* mutation_hook_;
+  rocksdb::Status EnsureReady() const;
+
+  ModuleServices* services_ = nullptr;
+  bool started_ = false;
 };
 
 }  // namespace minikv

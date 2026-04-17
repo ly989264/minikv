@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <cstddef>
+#include <functional>
 #include <map>
 #include <memory>
 #include <string>
@@ -19,7 +20,8 @@ struct CmdRegistration {
   std::string name;
   CmdFlags flags = CmdFlags::kNone;
   CommandSource source = CommandSource::kBuiltin;
-  std::unique_ptr<Cmd> (*creator)(const CmdRegistration&) = nullptr;
+  std::string owner_module;
+  std::function<std::unique_ptr<Cmd>(const CmdRegistration&)> creator;
 };
 
 std::string NormalizeCommandName(const std::string& name);

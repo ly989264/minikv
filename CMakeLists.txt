@@ -47,9 +47,6 @@ set(MINIKV_INTERNAL_HEADERS
   src/command/command_types.h
   src/command/cmd.h
   src/command/cmd_create.h
-  src/command/cmd_factory.h
-  src/command/t_hash.h
-  src/command/t_kv.h
   src/common/thread_name.h
   src/codec/key_codec.h
   src/kernel/command_registry.h
@@ -60,17 +57,19 @@ set(MINIKV_INTERNAL_HEADERS
   src/kernel/snapshot.h
   src/kernel/storage_engine.h
   src/kernel/write_context.h
+  src/module/module.h
+  src/module/module_manager.h
+  src/module/module_services.h
+  src/modules/core/core_module.h
+  src/modules/hash/hash_module.h
+  src/modules/hash/hash_types.h
   src/network/resp_parser.h
-  src/types/hash/hash_module.h
   src/worker/key_lock_table.h
   src/worker/worker.h)
 
 set(MINIKV_SOURCES
   src/command/cmd.cc
   src/command/cmd_create.cc
-  src/command/cmd_factory.cc
-  src/command/t_hash.cc
-  src/command/t_kv.cc
   src/common/thread_name.cc
   src/codec/key_codec.cc
   src/kernel/command_registry.cc
@@ -79,9 +78,12 @@ set(MINIKV_SOURCES
   src/kernel/snapshot.cc
   src/kernel/storage_engine.cc
   src/kernel/write_context.cc
+  src/module/module_manager.cc
+  src/module/module_services.cc
+  src/modules/core/core_module.cc
+  src/modules/hash/hash_module.cc
   src/network/network_server.cc
   src/network/resp_parser.cc
-  src/types/hash/hash_module.cc
   src/worker/key_lock_table.cc
   src/worker/worker.cc
   src/minikv.cc)
@@ -131,4 +133,6 @@ if(BUILD_TESTING)
     tests/network_test/reply_encode_test.cc)
   minikv_add_test(minikv_scheduler_test tests/kernel_test/scheduler_test.cc)
   minikv_add_test(minikv_snapshot_test tests/kernel_test/snapshot_test.cc)
+  minikv_add_test(minikv_module_manager_test
+    tests/module_test/module_manager_test.cc)
 endif()

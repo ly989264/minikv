@@ -2,29 +2,45 @@
 
 #include <memory>
 #include <utility>
+#include <vector>
 
-#include "kernel/mutation_hook.h"
+#include "module/module_manager.h"
 #include "kernel/scheduler.h"
 #include "kernel/storage_engine.h"
-#include "types/hash/hash_module.h"
+#include "modules/core/core_module.h"
+#include "modules/hash/hash_module.h"
 
 namespace minikv {
+namespace {
+
+std::vector<std::unique_ptr<Module>> CreateBuiltinModules() {
+  std::vector<std::unique_ptr<Module>> modules;
+  modules.push_back(std::make_unique<CoreModule>());
+  modules.push_back(std::make_unique<HashModule>());
+  return modules;
+}
+
+}  // namespace
 
 class MiniKV::Impl {
  public:
   explicit Impl(const Config& config_value)
       : config(config_value),
-        hash_module(&storage_engine, &mutation_hook),
-        command_services{&storage_engine, &hash_module},
-        scheduler(&command_services, config_value.worker_threads,
-                  config_value.max_pending_requests_per_worker) {}
+        scheduler(config_value.worker_threads,
+                  config_value.max_pending_requests_per_worker),
+        module_manager(std::make_unique<ModuleManager>(
+            &storage_engine, &scheduler, CreateBuiltinModules())) {}
+
+  ~Impl() {
+    if (module_manager != nullptr) {
+      module_manager->StopAll();
+    }
+  }
 
   Config config;
   StorageEngine storage_engine;
-  NoopMutationHook mutation_hook;
-  HashModule hash_module;
-  CommandServices command_services;
   Scheduler scheduler;
+  std::unique_ptr<ModuleManager> module_manager;
 };
 
 MiniKV::MiniKV(std::unique_ptr<Impl> impl) : impl_(std::move(impl)) {}
@@ -38,10 +54,18 @@ rocksdb::Status MiniKV::Open(const Config& config,
   if (!status.ok()) {
     return status;
   }
+  status = impl->module_manager->Initialize();
+  if (!status.ok()) {
+    return status;
+  }
   minikv->reset(new MiniKV(std::move(impl)));
   return rocksdb::Status::OK();
 }
 
 Scheduler* MiniKV::scheduler() { return &impl_->scheduler; }
+
+const CommandRegistry& MiniKV::command_registry() const {
+  return impl_->module_manager->command_registry();
+}
 
 }  // namespace minikv

@@ -9,12 +9,6 @@ This layer is defined by:
 - `src/command/cmd.cc`
 - `src/command/cmd_create.h`
 - `src/command/cmd_create.cc`
-- `src/command/cmd_factory.h`
-- `src/command/cmd_factory.cc`
-- `src/command/t_kv.h`
-- `src/command/t_kv.cc`
-- `src/command/t_hash.h`
-- `src/command/t_hash.cc`
 
 It maps parsed RESP command parts into executable operations.
 
@@ -24,7 +18,7 @@ The command layer owns three steps:
 
 - turn parsed RESP parts into `Cmd`
 - validate arguments and derive `RouteKey()`
-- execute command semantics against `CommandServices`
+- execute command semantics through the module-bound `Cmd`
 
 This keeps the network layer unaware of individual command rules.
 
@@ -37,19 +31,18 @@ Supported commands:
 - `HGETALL`
 - `HDEL`
 
-`CmdFactory` owns registration for each supported command, and `CreateCmd()`
-uses that registration to instantiate concrete `Cmd` implementations from RESP
-parts.
+Those commands are registered by builtin modules during startup:
 
-Current command implementations are grouped by family:
+- `CoreModule`: `PING`
+- `HashModule`: `HSET`, `HGETALL`, `HDEL`
 
-- `t_kv.*`: `PING`
-- `t_hash.*`: `HSET`, `HGETALL`, `HDEL`
+`CreateCmd()` now resolves names from the runtime `CommandRegistry` owned by
+`ModuleManager`.
 
 ## Current Design Characteristics
 
 - `PING` remains protocol-level and storage-independent.
-- Hash commands delegate to `HashModule` through `CommandServices`.
+- Hash commands are created from registrations owned by `HashModule`.
 - `CommandResponse` normalizes execution output before the network encoder sees
   it.
 - The command layer now has one input path: parsed RESP command parts.

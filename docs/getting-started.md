@@ -9,7 +9,7 @@ It follows the current implementation rather than a future target design.
 
 The main request path is:
 
-`main -> NetworkServer -> RESP parser -> CmdFactory -> Scheduler -> Worker -> CommandServices -> HashModule -> Snapshot / WriteContext -> StorageEngine -> RocksDB`
+`main -> NetworkServer -> RESP parser -> runtime CommandRegistry -> Scheduler -> Worker -> builtin module command -> HashModule -> ModuleSnapshot / ModuleWriteBatch -> StorageEngine -> RocksDB`
 
 Current scope is intentionally narrow:
 
@@ -38,17 +38,33 @@ Runtime owner.
 `MiniKV` owns:
 
 - `StorageEngine`
-- `NoopMutationHook`
-- `HashModule`
-- `CommandServices`
 - `Scheduler`
+- `ModuleManager`
 
 Important behavior:
 
 - `MiniKV::Open()` opens the RocksDB-backed storage engine before publishing
   the runtime
+- builtin modules load through `ModuleManager`
+- current module support is builtin-only and source-level only
 - `MiniKV` does not expose command execution helpers
 - `MiniKV` exists to share runtime state with `NetworkServer`
+
+### `src/module/*`
+
+Builtin module SPI and lifecycle management.
+
+This layer provides:
+
+- `Module`
+- `ModuleManager`
+- `ModuleServices`
+- `ModuleCommandRegistry`
+- `ModuleStorage`
+- `ModuleSnapshotService`
+- `ModuleSchedulerView`
+- `ModuleNamespace`
+- `ModuleMetrics`
 
 ### `src/network/network_server.h` and `src/network/network_server.cc`
 
@@ -72,11 +88,10 @@ Command creation and execution.
 
 This layer:
 
-- registers each supported command once
-- separates registration lookup from command creation
-- maps command names onto concrete `Cmd` classes
+- turns parsed RESP parts into initialized `Cmd` objects
+- looks command names up in the runtime registry owned by `ModuleManager`
 - performs command-specific validation and route-key derivation
-- executes against `CommandServices`
+- executes through module-bound command objects
 
 ### `src/kernel/scheduler.*` and `src/worker/*`
 
@@ -93,7 +108,7 @@ Concurrency core.
 Correctness rule:
 
 - acquire the striped key lock for `cmd->RouteKey()`
-- execute `Cmd::Execute(services)`
+- execute `Cmd::Execute()`
 - release the key lock after completion
 
 ### `src/kernel/storage_engine.*`
@@ -120,21 +135,22 @@ Read and write helpers.
 - `Snapshot` pins one RocksDB snapshot and serves consistent reads
 - `WriteContext` owns one logical write batch and commits it once
 
-### `src/types/hash/hash_module.*`
+### `src/modules/hash/*`
 
 Hash semantics layer.
 
 `HashModule` is responsible for:
 
+- registering `HSET`, `HGETALL`, and `HDEL` during `OnLoad()`
 - `PutField()`
 - `ReadAll()`
 - `DeleteFields()`
 
 Current design rules:
 
-- reads always use `Snapshot`
-- writes always use `WriteContext`
-- hook call sites exist for future secondary effects
+- reads go through `ModuleSnapshot`
+- writes go through `ModuleWriteBatch`
+- the current module boundary is builtin-only, with no external ABI
 
 ### `src/codec/key_codec.*`
 

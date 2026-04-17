@@ -29,7 +29,8 @@ Current command behavior:
 - `HDEL key field [field ...]` removes existing fields and returns the integer
   count of removed fields.
 
-No other command names are registered in `CmdFactory`.
+No other command names are registered in the shared runtime `CommandRegistry`
+loaded by `ModuleManager`.
 
 ## Current Thread Model
 
@@ -84,10 +85,17 @@ The active kernel split is:
 
 - `StorageEngine`: RocksDB open path, column-family handles, primitive
   `Get/Put/Delete/Write`, and snapshot creation
-- `Snapshot`: consistent read view used by logical multi-column-family reads
-- `WriteContext`: one logical write batch per mutation
-- `HashModule`: hash semantics on top of storage primitives
-- `MutationHook`: hook interface for future secondary effects, currently no-op
+- `ModuleSnapshot`: consistent read view used by logical multi-column-family
+  reads
+- `ModuleWriteBatch`: one logical write batch per mutation
+- `HashModule`: hash semantics plus builtin command registration for hash
+  commands
+
+Builtin module scope today:
+
+- `CoreModule`: protocol-level builtin commands such as `PING`
+- `HashModule`: builtin hash commands and semantics
+- no external ABI or dynamic module loading
 
 `StorageEngine` currently opens three RocksDB column families:
 
@@ -112,14 +120,13 @@ Current metadata fields are:
 
 Current behavior is limited to hash operations:
 
-- `HSET` reads metadata and field existence through one `Snapshot`, writes
-  metadata plus field value through one `WriteContext`, and passes through the
-  mutation hook call site before commit
+- `HSET` reads metadata and field existence through one `ModuleSnapshot` and
+  writes metadata plus field value through one `ModuleWriteBatch`
 - `HGETALL` reads metadata and scans the `hash` column family through one
-  `Snapshot`
-- `HDEL` reads metadata and field existence through one `Snapshot`, deletes
-  existing field keys and updates or removes metadata through one
-  `WriteContext`, and passes through the mutation hook call site before commit
+  `ModuleSnapshot`
+- `HDEL` reads metadata and field existence through one `ModuleSnapshot`,
+  deletes existing field keys, and updates or removes metadata through one
+  `ModuleWriteBatch`
 
 ## Current Non-Supported Items
 
@@ -128,7 +135,8 @@ The following are explicitly not supported in the current baseline:
 - non-hash data types such as string, list, set, zset, stream, or generic KV
 - complex reply shapes beyond simple string, integer, flat bulk-string array,
   and error
-- module platform behavior, module loading, or module-defined commands
+- external module loading, external ABI support, or third-party module-defined
+  commands
 - search functionality, including any `FT.*` command family
 
 Additional current limitations:
@@ -137,7 +145,6 @@ Additional current limitations:
 - no cross-key atomicity exists
 - no transaction interface exists
 - no replication, clustering, or persistence modes beyond local RocksDB exist
-- mutation hooks do not yet have any non-noop implementation
 
 ## Consequences
 

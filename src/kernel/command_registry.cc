@@ -16,7 +16,7 @@ rocksdb::Status CommandRegistry::Register(CmdRegistration registration) {
   if (registration.name.empty()) {
     return rocksdb::Status::InvalidArgument("command name is required");
   }
-  if (registration.creator == nullptr) {
+  if (!registration.creator) {
     return rocksdb::Status::InvalidArgument("command creator is required");
   }
 
@@ -24,8 +24,14 @@ rocksdb::Status CommandRegistry::Register(CmdRegistration registration) {
   auto [it, inserted] =
       registrations_.emplace(registration.name, std::move(registration));
   if (!inserted) {
-    return rocksdb::Status::InvalidArgument("command already registered: " +
-                                            it->first);
+    std::string message = "command already registered: " + it->first;
+    if (!it->second.owner_module.empty()) {
+      message += " existing module=" + it->second.owner_module;
+    }
+    if (!registration.owner_module.empty()) {
+      message += " new module=" + registration.owner_module;
+    }
+    return rocksdb::Status::InvalidArgument(message);
   }
   return rocksdb::Status::OK();
 }

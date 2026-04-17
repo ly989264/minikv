@@ -6,11 +6,13 @@
 #include <vector>
 
 #include "gtest/gtest.h"
-#include "kernel/mutation_hook.h"
+#include "kernel/scheduler.h"
 #include "kernel/storage_engine.h"
 #include "config.h"
+#include "module/module_manager.h"
+#include "module/module.h"
 #include "rocksdb/db.h"
-#include "types/hash/hash_module.h"
+#include "modules/hash/hash_module.h"
 
 namespace {
 
@@ -25,7 +27,9 @@ class HashModuleTest : public ::testing::Test {
   }
 
   void TearDown() override {
-    hash_module_.reset();
+    module_manager_.reset();
+    scheduler_.reset();
+    hash_module_ = nullptr;
     storage_engine_.reset();
     rocksdb::Options options;
     ASSERT_TRUE(rocksdb::DestroyDB(db_path_, options).ok());
@@ -36,15 +40,22 @@ class HashModuleTest : public ::testing::Test {
     config.db_path = db_path_;
     storage_engine_ = std::make_unique<minikv::StorageEngine>();
     ASSERT_TRUE(storage_engine_->Open(config).ok());
-    hash_module_ = std::make_unique<minikv::HashModule>(storage_engine_.get(),
-                                                        &mutation_hook_);
+    scheduler_ = std::make_unique<minikv::Scheduler>(1, 16);
+    auto hash_module = std::make_unique<minikv::HashModule>();
+    hash_module_ = hash_module.get();
+    std::vector<std::unique_ptr<minikv::Module>> modules;
+    modules.push_back(std::move(hash_module));
+    module_manager_ = std::make_unique<minikv::ModuleManager>(
+        storage_engine_.get(), scheduler_.get(), std::move(modules));
+    ASSERT_TRUE(module_manager_->Initialize().ok());
   }
 
   static inline int counter_ = 0;
   std::string db_path_;
-  minikv::NoopMutationHook mutation_hook_;
+  std::unique_ptr<minikv::Scheduler> scheduler_;
+  std::unique_ptr<minikv::ModuleManager> module_manager_;
   std::unique_ptr<minikv::StorageEngine> storage_engine_;
-  std::unique_ptr<minikv::HashModule> hash_module_;
+  minikv::HashModule* hash_module_ = nullptr;
 };
 
 TEST_F(HashModuleTest, PutFieldAndReadAll) {
@@ -107,7 +118,9 @@ TEST_F(HashModuleTest, DeleteCountsOnlyExistingFields) {
 
 TEST_F(HashModuleTest, ReopenPreservesHashData) {
   ASSERT_TRUE(hash_module_->PutField("user:reopen", "name", "alice", nullptr).ok());
-  hash_module_.reset();
+  module_manager_.reset();
+  scheduler_.reset();
+  hash_module_ = nullptr;
   storage_engine_.reset();
 
   OpenModule();

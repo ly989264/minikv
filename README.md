@@ -1,8 +1,10 @@
 # MiniKV
 
 `minikv` is a small Redis-like prototype built on RocksDB. It currently focuses
-on a narrow hash-only command surface, exposes a network-only runtime, and is
-maintained here as a standalone project under `cancer_redis/minikv`.
+on a narrow hash-only command surface, exposes a network-only runtime, and now
+loads its command surface from builtin modules only. There is currently no
+external module ABI. The project is maintained here as a standalone project
+under `cancer_redis/minikv`.
 
 ## Quick Start
 

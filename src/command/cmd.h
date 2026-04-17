@@ -10,14 +10,6 @@
 
 namespace minikv {
 
-class HashModule;
-class StorageEngine;
-
-struct CommandServices {
-  StorageEngine* storage_engine = nullptr;
-  HashModule* hash_module = nullptr;
-};
-
 enum class CmdFlags : uint32_t {
   kNone = 0,
   kRead = 1u << 0,
@@ -56,7 +48,7 @@ class Cmd {
   virtual ~Cmd() = default;
 
   rocksdb::Status Init(const CmdInput& input);
-  CommandResponse Execute(CommandServices* services);
+  CommandResponse Execute();
 
   const std::string& Name() const { return name_; }
   CmdFlags Flags() const { return flags_; }
@@ -79,7 +71,7 @@ class Cmd {
 
  private:
   virtual rocksdb::Status DoInitial(const CmdInput& input) = 0;
-  virtual CommandResponse Do(CommandServices* services) = 0;
+  virtual CommandResponse Do() = 0;
 
   std::string name_;
   CmdFlags flags_;

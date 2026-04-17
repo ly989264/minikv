@@ -34,7 +34,7 @@ The request path inside the network layer is:
 1. accept a socket on the accept thread
 2. hand the socket to one I/O thread
 3. parse one or more RESP arrays from the read buffer
-4. call `CreateCmd(parts, &cmd)`
+4. call `CreateCmd(minikv->command_registry(), parts, &cmd)`
 5. submit the `Cmd` into the shared `Scheduler`
 6. buffer the `CommandResponse` on completion
 7. preserve per-connection response order by request sequence

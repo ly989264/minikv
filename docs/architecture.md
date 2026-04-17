@@ -22,21 +22,22 @@ Related documents:
 
 The current implementation is organized as:
 
-`main -> NetworkServer -> RESP parser / CmdFactory -> Scheduler -> Worker -> CommandServices -> HashModule -> Snapshot / WriteContext -> StorageEngine -> RocksDB`
+`main -> NetworkServer -> RESP parser / runtime CommandRegistry -> Scheduler -> Worker -> builtin module command -> HashModule -> ModuleSnapshot / ModuleWriteBatch -> StorageEngine -> RocksDB`
 
 The responsibilities are:
 
 - `src/main.cc`: parses process flags, opens `MiniKV`, starts `NetworkServer`
-- `src/minikv.h` and `src/minikv.cc`: runtime owner for storage,
-  typed modules, and shared scheduler state
+- `src/minikv.h` and `src/minikv.cc`: runtime owner for storage, shared
+  scheduler state, and builtin module loading
 - `src/network/network_server.h` and `src/network/`: TCP accept loop,
   per-I/O-thread connection management, RESP parsing, response encoding, and
   response reordering
-- `src/command/`: converts parsed RESP parts into registered `Cmd` objects and
-  executes supported commands against `CommandServices`
+- `src/module/`: builtin module SPI, lifecycle, and module service facades
+- `src/command/`: converts parsed RESP parts into registered `Cmd` objects
 - `src/kernel/`: scheduler, storage engine, snapshot, write context, command
   registry, reply helpers, and mutation hook interfaces
-- `src/types/hash/`: current hash semantics built on top of storage primitives
+- `src/modules/core/`: protocol-level builtin commands such as `PING`
+- `src/modules/hash/`: hash builtin module and its command registrations
 - `src/codec/`: key and metadata encoding rules
 - `src/worker/`: worker queue and same-key serialized command execution
 
@@ -45,6 +46,7 @@ Public behavior is intentionally narrow today:
 - supported commands: `PING`, `HSET`, `HGETALL`, `HDEL`
 - supported data type: hash only
 - supported deployment shape: single process, POSIX server path
+- supported module shape: builtin modules only, with no external ABI
 
 ## Request Lifecycle
 
@@ -56,14 +58,15 @@ semantics:
 2. Each I/O thread polls its own connections, reads bytes, appends into the
    per-connection read buffer, and uses `RespParser` to extract one or more
    RESP arrays.
-3. Parsed parts are converted into a concrete `Cmd` by `CmdFactory`.
+3. Parsed parts are converted into a concrete `Cmd` through the runtime
+   `CommandRegistry` owned by `ModuleManager`.
 4. `NetworkServer` assigns a per-connection request sequence and submits the
    task into the shared `Scheduler`.
 5. `Scheduler` picks a worker queue with round-robin plus ring probing.
 6. The worker thread acquires the striped key lock for `cmd->RouteKey()` and
-   executes `Cmd::Execute(services)`.
-7. Hash commands use `HashModule`, which reads through `Snapshot` and writes
-   through `WriteContext`.
+   executes `Cmd::Execute()`.
+7. Hash commands use `HashModule`, which reads through `ModuleSnapshot` and
+   writes through `ModuleWriteBatch`.
 8. `StorageEngine` translates those primitive operations onto RocksDB column
    families and write batches.
 9. The completion callback pushes the `CommandResponse` back into the owning
@@ -124,15 +127,16 @@ Impact:
 - the command layer is still biased toward the current RESP transport
 - a future non-RESP transport would likely need a second result-shaping layer
 
-### P2: Mutation Hook Exists Only As An Empty Extension Point
+### P2: Module SPI Is Still Builtin-Only
 
-`MutationHook` exists and receives logical hash mutations plus the active
-`WriteContext`, but the only implementation is `NoopMutationHook`.
+`minikv` now has a builtin module SPI, but it is intentionally limited to
+source-compiled modules loaded by `ModuleManager`.
 
 Impact:
 
-- the write path is ready for future secondary effects
-- there is no current indexing or search behavior behind that interface
+- command registration is now unified under one runtime registry
+- there is still no external ABI, dynamic loading path, or third-party module
+  contract
 
 ### P2: Metadata Schema Still Signals Future Features That Are Not Active
 

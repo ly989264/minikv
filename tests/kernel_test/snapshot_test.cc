@@ -10,7 +10,7 @@
 #include "kernel/storage_engine.h"
 #include "kernel/write_context.h"
 #include "rocksdb/db.h"
-#include "types/hash/hash_module.h"
+#include "modules/hash/hash_types.h"
 
 namespace {
 

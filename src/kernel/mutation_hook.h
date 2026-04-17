@@ -4,7 +4,7 @@
 #include <vector>
 
 #include "codec/key_codec.h"
-#include "types/hash/hash_module.h"
+#include "modules/hash/hash_types.h"
 #include "rocksdb/status.h"
 
 namespace minikv {

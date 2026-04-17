@@ -7,6 +7,7 @@
 
 namespace minikv {
 
+class CommandRegistry;
 class Scheduler;
 class NetworkServer;
 
@@ -26,6 +27,7 @@ class MiniKV {
 
   explicit MiniKV(std::unique_ptr<Impl> impl);
   Scheduler* scheduler();
+  const CommandRegistry& command_registry() const;
 
   std::unique_ptr<Impl> impl_;
 };

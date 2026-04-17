@@ -14,23 +14,29 @@ It is the runtime owner for the current process. It is not a command API.
 `MiniKV` owns the long-lived core subsystems:
 
 - `StorageEngine`
-- `NoopMutationHook`
-- `HashModule`
-- `CommandServices`
 - `Scheduler`
+- `ModuleManager`
 
 The ownership graph is:
 
-`MiniKV -> Impl -> { StorageEngine, NoopMutationHook, HashModule, CommandServices, Scheduler }`
+`MiniKV -> Impl -> { StorageEngine, Scheduler, ModuleManager }`
 
 `Open()` initializes RocksDB first and only publishes the `MiniKV` instance
 after the storage open path succeeds.
+
+Current module loading behavior:
+
+- builtin modules only
+- fixed source-compiled module list
+- no external ABI
+- no runtime `.so` loading
 
 ## Current Boundary
 
 - `MiniKV` no longer exposes command execution helpers.
 - `MiniKV` no longer exposes typed hash helpers.
 - `MiniKV` exists to own shared runtime state used by the network layer.
+- module lifecycle is centralized under `ModuleManager`.
 - `NetworkServer` is the only supported external request entrypoint.
 
 The only intentional coupling between runtime and network is that
@@ -41,6 +47,6 @@ The only intentional coupling between runtime and network is that
 The runtime layer is now narrow and explicit:
 
 - storage lifecycle lives here
-- hash semantics are owned by typed modules
+- builtin module lifecycle lives here
 - keyed command execution is owned by the scheduler
 - transport-specific behavior stays outside this layer

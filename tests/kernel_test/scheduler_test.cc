@@ -51,7 +51,7 @@ class BlockingCmd : public minikv::Cmd {
     return rocksdb::Status::OK();
   }
 
-  minikv::CommandResponse Do(minikv::CommandServices* /*context*/) override {
+  minikv::CommandResponse Do() override {
     {
       std::lock_guard<std::mutex> lock(tracker_->mutex);
       gate_->entered = true;
@@ -110,7 +110,7 @@ class QuickCmd : public minikv::Cmd {
     return rocksdb::Status::OK();
   }
 
-  minikv::CommandResponse Do(minikv::CommandServices* /*context*/) override {
+  minikv::CommandResponse Do() override {
     return MakeSimpleString("OK");
   }
 
@@ -135,7 +135,7 @@ bool WaitFor(Tracker* tracker, const std::function<bool()>& predicate,
 }
 
 TEST(SchedulerTest, SameKeyTasksDoNotExecuteInParallel) {
-  minikv::Scheduler scheduler(nullptr, 2, 4);
+  minikv::Scheduler scheduler(2, 4);
   Tracker tracker;
   Gate first_gate;
   Gate second_gate;
@@ -188,7 +188,7 @@ TEST(SchedulerTest, SameKeyTasksDoNotExecuteInParallel) {
 }
 
 TEST(SchedulerTest, SameKeyTasksSerializeEvenWhenMultipleWorkersPickThemUp) {
-  minikv::Scheduler scheduler(nullptr, 4, 8);
+  minikv::Scheduler scheduler(4, 8);
   Tracker tracker;
   std::array<Gate, 4> gates;
   std::vector<std::promise<void>> done(4);
@@ -256,7 +256,7 @@ TEST(SchedulerTest, SameKeyTasksSerializeEvenWhenMultipleWorkersPickThemUp) {
 }
 
 TEST(SchedulerTest, DifferentKeysCanExecuteInParallel) {
-  minikv::Scheduler scheduler(nullptr, 2, 4);
+  minikv::Scheduler scheduler(2, 4);
   Tracker tracker;
   Gate first_gate;
   Gate second_gate;
@@ -300,7 +300,7 @@ TEST(SchedulerTest, DifferentKeysCanExecuteInParallel) {
 }
 
 TEST(SchedulerTest, EmptyRouteKeyDoesNotTakeKeyLock) {
-  minikv::Scheduler scheduler(nullptr, 2, 4);
+  minikv::Scheduler scheduler(2, 4);
   Tracker tracker;
   Gate first_gate;
   Gate second_gate;
@@ -344,7 +344,7 @@ TEST(SchedulerTest, EmptyRouteKeyDoesNotTakeKeyLock) {
 }
 
 TEST(SchedulerTest, DifferentKeyQuickTaskCompletesWhileHotKeyIsBlocked) {
-  minikv::Scheduler scheduler(nullptr, 2, 4);
+  minikv::Scheduler scheduler(2, 4);
   Tracker tracker;
   Gate blocked_gate;
   std::promise<void> blocked_entered;
@@ -384,7 +384,7 @@ TEST(SchedulerTest, DifferentKeyQuickTaskCompletesWhileHotKeyIsBlocked) {
 }
 
 TEST(SchedulerTest, SameKeyQuickTaskWaitsUntilBlockedTaskReleasesLock) {
-  minikv::Scheduler scheduler(nullptr, 2, 4);
+  minikv::Scheduler scheduler(2, 4);
   Tracker tracker;
   Gate blocked_gate;
   std::promise<void> blocked_entered;
@@ -427,7 +427,7 @@ TEST(SchedulerTest, SameKeyQuickTaskWaitsUntilBlockedTaskReleasesLock) {
 }
 
 TEST(SchedulerTest, MetricsSnapshotTracksBacklogRejectionsAndInflight) {
-  minikv::Scheduler scheduler(nullptr, 1, 1);
+  minikv::Scheduler scheduler(1, 1);
   Tracker tracker;
   Gate blocked_gate;
   std::promise<void> blocked_entered;

@@ -17,8 +17,7 @@ class Scheduler {
  public:
   using Completion = WorkerTask::Completion;
 
-  Scheduler(CommandServices* context, size_t worker_count,
-            size_t max_queue_depth);
+  Scheduler(size_t worker_count, size_t max_queue_depth);
   ~Scheduler() = default;
 
   Scheduler(const Scheduler&) = delete;
@@ -32,11 +31,11 @@ class Scheduler {
   uint64_t inflight_requests() const {
     return inflight_requests_.load(std::memory_order_relaxed);
   }
+  size_t worker_count() const { return workers_.size(); }
   std::vector<size_t> worker_queue_depth() const;
   MetricsSnapshot GetMetricsSnapshot() const;
 
  private:
-  CommandServices* context_;
   KeyLockTable key_lock_table_;
   std::vector<std::unique_ptr<Worker>> workers_;
   std::atomic<size_t> next_worker_{0};

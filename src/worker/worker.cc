@@ -68,10 +68,8 @@ size_t Worker::BoundedMPSCQueue::Backlog() const {
   return head - tail;
 }
 
-Worker::Worker(CommandServices* context, KeyLockTable* key_lock_table,
-               size_t queue_depth, size_t worker_id)
-    : context_(context),
-      key_lock_table_(key_lock_table),
+Worker::Worker(KeyLockTable* key_lock_table, size_t queue_depth, size_t worker_id)
+    : key_lock_table_(key_lock_table),
       queue_(queue_depth),
       worker_id_(worker_id),
       thread_([this] { Run(); }) {}
@@ -97,15 +95,14 @@ bool Worker::Enqueue(WorkerTask* task) {
 
 size_t Worker::backlog() const { return queue_.Backlog(); }
 
-CommandResponse ExecuteCommand(CommandServices* context,
-                               KeyLockTable* key_lock_table, Cmd* cmd) {
+CommandResponse ExecuteCommand(KeyLockTable* key_lock_table, Cmd* cmd) {
   KeyLockTable::Guard guard;
   if (key_lock_table != nullptr) {
     guard = key_lock_table->Acquire(cmd->RouteKey());
   }
 
   try {
-    return cmd->Execute(context);
+    return cmd->Execute();
   } catch (const std::exception& e) {
     return CommandResponse{rocksdb::Status::Aborted(e.what()), {}};
   } catch (...) {
@@ -115,7 +112,7 @@ CommandResponse ExecuteCommand(CommandServices* context,
 }
 
 CommandResponse Worker::ExecuteTask(WorkerTask* task) {
-  return ExecuteCommand(context_, key_lock_table_, task->cmd.get());
+  return ExecuteCommand(key_lock_table_, task->cmd.get());
 }
 
 void Worker::Run() {

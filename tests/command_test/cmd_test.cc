@@ -5,13 +5,15 @@
 #include <vector>
 
 #include "command/cmd_create.h"
-#include "command/cmd_factory.h"
-#include "gtest/gtest.h"
-#include "kernel/mutation_hook.h"
-#include "kernel/storage_engine.h"
 #include "config.h"
+#include "gtest/gtest.h"
+#include "kernel/scheduler.h"
+#include "kernel/storage_engine.h"
+#include "module/module.h"
+#include "module/module_manager.h"
+#include "modules/core/core_module.h"
+#include "modules/hash/hash_module.h"
 #include "rocksdb/db.h"
-#include "types/hash/hash_module.h"
 
 namespace {
 
@@ -78,7 +80,7 @@ class TestCmd : public minikv::Cmd {
     return rocksdb::Status::OK();
   }
 
-  minikv::CommandResponse Do(minikv::CommandServices* /*context*/) override {
+  minikv::CommandResponse Do() override {
     if (!status_to_return_.ok()) {
       return MakeStatus(std::move(status_to_return_));
     }
@@ -98,7 +100,7 @@ class TestCmd : public minikv::Cmd {
   rocksdb::Status status_to_return_ = rocksdb::Status::OK();
 };
 
-class CmdExecutionTest : public ::testing::Test {
+class ModuleRuntimeTest : public ::testing::Test {
  protected:
   void SetUp() override {
     db_path_ = (std::filesystem::temp_directory_path() /
@@ -109,121 +111,135 @@ class CmdExecutionTest : public ::testing::Test {
     config.db_path = db_path_;
     storage_engine_ = std::make_unique<minikv::StorageEngine>();
     ASSERT_TRUE(storage_engine_->Open(config).ok());
-    hash_module_ = std::make_unique<minikv::HashModule>(storage_engine_.get(),
-                                                        &mutation_hook_);
-    context_.storage_engine = storage_engine_.get();
-    context_.hash_module = hash_module_.get();
+    scheduler_ = std::make_unique<minikv::Scheduler>(2, 16);
+
+    std::vector<std::unique_ptr<minikv::Module>> modules;
+    modules.push_back(std::make_unique<minikv::CoreModule>());
+    auto hash_module = std::make_unique<minikv::HashModule>();
+    hash_module_ = hash_module.get();
+    modules.push_back(std::move(hash_module));
+
+    module_manager_ = std::make_unique<minikv::ModuleManager>(
+        storage_engine_.get(), scheduler_.get(), std::move(modules));
+    ASSERT_TRUE(module_manager_->Initialize().ok());
   }
 
   void TearDown() override {
-    hash_module_.reset();
+    module_manager_.reset();
+    scheduler_.reset();
     storage_engine_.reset();
     rocksdb::Options options;
     ASSERT_TRUE(rocksdb::DestroyDB(db_path_, options).ok());
   }
 
+  const minikv::CommandRegistry& registry() const {
+    return module_manager_->command_registry();
+  }
+
   std::unique_ptr<minikv::Cmd> CreateFromParts(
       const std::vector<std::string>& parts) {
     std::unique_ptr<minikv::Cmd> cmd;
-    EXPECT_TRUE(minikv::CreateCmd(parts, &cmd).ok());
+    EXPECT_TRUE(minikv::CreateCmd(registry(), parts, &cmd).ok());
     return cmd;
   }
 
   static inline int counter_ = 0;
   std::string db_path_;
-  minikv::NoopMutationHook mutation_hook_;
-  minikv::CommandServices context_;
+  std::unique_ptr<minikv::Scheduler> scheduler_;
+  std::unique_ptr<minikv::ModuleManager> module_manager_;
   std::unique_ptr<minikv::StorageEngine> storage_engine_;
-  std::unique_ptr<minikv::HashModule> hash_module_;
+  minikv::HashModule* hash_module_ = nullptr;
 };
 
-TEST(CmdFactoryTest, FindsRegisteredCommandsByName) {
-  const minikv::CmdRegistration* ping =
-      minikv::CmdFactory::FindByName("PING");
+TEST_F(ModuleRuntimeTest, FindsRegisteredCommandsByName) {
+  const minikv::CmdRegistration* ping = registry().Find("PING");
   ASSERT_NE(ping, nullptr);
   EXPECT_EQ(ping->source, minikv::CommandSource::kBuiltin);
+  EXPECT_EQ(ping->owner_module, "core");
   ExpectFlags(ping->flags, true, false, true, false);
 
-  const minikv::CmdRegistration* hset =
-      minikv::CmdFactory::FindByName("HSET");
+  const minikv::CmdRegistration* hset = registry().Find("HSET");
   ASSERT_NE(hset, nullptr);
   EXPECT_EQ(hset->name, "HSET");
+  EXPECT_EQ(hset->owner_module, "hash");
   ExpectFlags(hset->flags, false, true, true, false);
 
-  const minikv::CmdRegistration* hgetall =
-      minikv::CmdFactory::FindByName("HGETALL");
+  const minikv::CmdRegistration* hgetall = registry().Find("HGETALL");
   ASSERT_NE(hgetall, nullptr);
   EXPECT_EQ(hgetall->name, "HGETALL");
+  EXPECT_EQ(hgetall->owner_module, "hash");
   ExpectFlags(hgetall->flags, true, false, false, true);
 
-  const minikv::CmdRegistration* hdel =
-      minikv::CmdFactory::FindByName("HDEL");
+  const minikv::CmdRegistration* hdel = registry().Find("HDEL");
   ASSERT_NE(hdel, nullptr);
   EXPECT_EQ(hdel->name, "HDEL");
+  EXPECT_EQ(hdel->owner_module, "hash");
   ExpectFlags(hdel->flags, false, true, false, true);
 }
 
-TEST(CmdFactoryTest, ReturnsNullForUnknownRegistrations) {
-  EXPECT_EQ(minikv::CmdFactory::FindByName("ping"), nullptr);
-  EXPECT_EQ(minikv::CmdFactory::FindByName("UNKNOWN"), nullptr);
+TEST_F(ModuleRuntimeTest, ReturnsNullForUnknownRegistrations) {
+  EXPECT_EQ(registry().Find("ping"), nullptr);
+  EXPECT_EQ(registry().Find("UNKNOWN"), nullptr);
 }
 
-TEST(CmdCreateTest, CreatesCommandsFromRespParts) {
+TEST_F(ModuleRuntimeTest, CreatesCommandsFromRespParts) {
   std::unique_ptr<minikv::Cmd> ping;
-  ASSERT_TRUE(minikv::CreateCmd({"PING"}, &ping).ok());
+  ASSERT_TRUE(minikv::CreateCmd(registry(), {"PING"}, &ping).ok());
   ASSERT_NE(ping, nullptr);
   EXPECT_EQ(ping->Name(), "PING");
   EXPECT_TRUE(ping->RouteKey().empty());
   ExpectFlags(ping->Flags(), true, false, true, false);
 
   std::unique_ptr<minikv::Cmd> hset;
-  ASSERT_TRUE(minikv::CreateCmd({"HSET", "user:1", "name", "alice"}, &hset)
-                  .ok());
+  ASSERT_TRUE(
+      minikv::CreateCmd(registry(), {"HSET", "user:1", "name", "alice"}, &hset)
+          .ok());
   ASSERT_NE(hset, nullptr);
   EXPECT_EQ(hset->Name(), "HSET");
   EXPECT_EQ(hset->RouteKey(), "user:1");
   ExpectFlags(hset->Flags(), false, true, true, false);
 
   std::unique_ptr<minikv::Cmd> lower;
-  ASSERT_TRUE(minikv::CreateCmd({"hgetall", "user:1"}, &lower).ok());
+  ASSERT_TRUE(minikv::CreateCmd(registry(), {"hgetall", "user:1"}, &lower).ok());
   ASSERT_NE(lower, nullptr);
   EXPECT_EQ(lower->Name(), "HGETALL");
 }
 
-TEST(CmdCreateTest, RejectsBadArgumentsAndNullOutputs) {
-  EXPECT_TRUE(minikv::CreateCmd(std::vector<std::string>{"PING"}, nullptr)
-                  .IsInvalidArgument());
+TEST_F(ModuleRuntimeTest, RejectsBadArgumentsAndNullOutputs) {
+  EXPECT_TRUE(
+      minikv::CreateCmd(registry(), std::vector<std::string>{"PING"}, nullptr)
+          .IsInvalidArgument());
 
   std::unique_ptr<minikv::Cmd> cmd;
   rocksdb::Status status =
-      minikv::CreateCmd(std::vector<std::string>{}, &cmd);
+      minikv::CreateCmd(registry(), std::vector<std::string>{}, &cmd);
   ASSERT_TRUE(status.IsInvalidArgument());
   EXPECT_NE(status.ToString().find("empty command"), std::string::npos);
 
-  status = minikv::CreateCmd({"UNKNOWN"}, &cmd);
+  status = minikv::CreateCmd(registry(), {"UNKNOWN"}, &cmd);
   ASSERT_TRUE(status.IsInvalidArgument());
   EXPECT_NE(status.ToString().find("unsupported command"), std::string::npos);
 
-  status = minikv::CreateCmd({"HSET"}, &cmd);
+  status = minikv::CreateCmd(registry(), {"HSET"}, &cmd);
   ASSERT_TRUE(status.IsInvalidArgument());
   EXPECT_NE(status.ToString().find("missing key"), std::string::npos);
 
-  status = minikv::CreateCmd({"HSET", "user:1", "field"}, &cmd);
+  status = minikv::CreateCmd(registry(), {"HSET", "user:1", "field"}, &cmd);
   ASSERT_TRUE(status.IsInvalidArgument());
   EXPECT_NE(status.ToString().find("HSET requires field and value"),
             std::string::npos);
 
-  status = minikv::CreateCmd({"HGETALL", "user:1", "extra"}, &cmd);
+  status = minikv::CreateCmd(registry(), {"HGETALL", "user:1", "extra"}, &cmd);
   ASSERT_TRUE(status.IsInvalidArgument());
   EXPECT_NE(status.ToString().find("HGETALL takes no extra arguments"),
             std::string::npos);
 
-  status = minikv::CreateCmd({"HDEL", "user:1"}, &cmd);
+  status = minikv::CreateCmd(registry(), {"HDEL", "user:1"}, &cmd);
   ASSERT_TRUE(status.IsInvalidArgument());
   EXPECT_NE(status.ToString().find("HDEL requires at least one field"),
             std::string::npos);
 
-  status = minikv::CreateCmd({"PING", "extra"}, &cmd);
+  status = minikv::CreateCmd(registry(), {"PING", "extra"}, &cmd);
   ASSERT_TRUE(status.IsInvalidArgument());
   EXPECT_NE(status.ToString().find("PING takes no arguments"),
             std::string::npos);
@@ -231,7 +247,7 @@ TEST(CmdCreateTest, RejectsBadArgumentsAndNullOutputs) {
 
 TEST(CmdBaseTest, ExecuteRejectsUninitializedCommand) {
   TestCmd cmd;
-  minikv::CommandResponse response = cmd.Execute(nullptr);
+  minikv::CommandResponse response = cmd.Execute();
   ASSERT_TRUE(response.status.IsInvalidArgument());
   EXPECT_NE(response.status.ToString().find(
                 "command must be initialized before execution"),
@@ -257,50 +273,50 @@ TEST(CmdBaseTest, SharedResponseBuildersProduceExpectedShapes) {
   ASSERT_TRUE(cmd.Init(minikv::CmdInput{}).ok());
 
   cmd.SetResponseMode(TestReplyMode::kSimpleString);
-  minikv::CommandResponse response = cmd.Execute(nullptr);
+  minikv::CommandResponse response = cmd.Execute();
   ASSERT_TRUE(response.status.ok());
   ASSERT_TRUE(response.reply.IsSimpleString());
   EXPECT_EQ(response.reply.string(), "OK");
 
   cmd.SetResponseMode(TestReplyMode::kInteger);
-  response = cmd.Execute(nullptr);
+  response = cmd.Execute();
   ASSERT_TRUE(response.status.ok());
   ASSERT_TRUE(response.reply.IsInteger());
   EXPECT_EQ(response.reply.integer(), 7);
 
   cmd.SetResponseMode(TestReplyMode::kArray);
-  response = cmd.Execute(nullptr);
+  response = cmd.Execute();
   ASSERT_TRUE(response.status.ok());
   ExpectBulkStringArray(response.reply, {"a", "b"});
 
   cmd.SetStatusToReturn(rocksdb::Status::Corruption("forced"));
-  response = cmd.Execute(nullptr);
+  response = cmd.Execute();
   ASSERT_TRUE(response.status.IsCorruption());
 }
 
-TEST(CmdCreateTest, EmptyStringKeyRemainsValidForHashCommands) {
+TEST_F(ModuleRuntimeTest, EmptyStringKeyRemainsValidForHashCommands) {
   std::unique_ptr<minikv::Cmd> cmd;
-  ASSERT_TRUE(minikv::CreateCmd({"HGETALL", ""}, &cmd).ok());
+  ASSERT_TRUE(minikv::CreateCmd(registry(), {"HGETALL", ""}, &cmd).ok());
   ASSERT_NE(cmd, nullptr);
   EXPECT_EQ(cmd->RouteKey(), "");
   EXPECT_EQ(cmd->Name(), "HGETALL");
 }
 
-TEST_F(CmdExecutionTest, PingExecuteReturnsPong) {
+TEST_F(ModuleRuntimeTest, PingExecuteReturnsPong) {
   std::unique_ptr<minikv::Cmd> ping = CreateFromParts({"PING"});
   ASSERT_NE(ping, nullptr);
 
-  minikv::CommandResponse response = ping->Execute(&context_);
+  minikv::CommandResponse response = ping->Execute();
   ASSERT_TRUE(response.status.ok());
   ASSERT_TRUE(response.reply.IsSimpleString());
   EXPECT_EQ(response.reply.string(), "PONG");
 }
 
-TEST_F(CmdExecutionTest, HSetAndHGetAllExecuteAgainstEngine) {
+TEST_F(ModuleRuntimeTest, HSetAndHGetAllExecuteAgainstEngine) {
   std::unique_ptr<minikv::Cmd> set_insert =
       CreateFromParts({"HSET", "user:2", "name", "alice"});
   ASSERT_NE(set_insert, nullptr);
-  minikv::CommandResponse response = set_insert->Execute(&context_);
+  minikv::CommandResponse response = set_insert->Execute();
   ASSERT_TRUE(response.status.ok());
   ASSERT_TRUE(response.reply.IsInteger());
   EXPECT_EQ(response.reply.integer(), 1);
@@ -308,19 +324,19 @@ TEST_F(CmdExecutionTest, HSetAndHGetAllExecuteAgainstEngine) {
   std::unique_ptr<minikv::Cmd> set_update =
       CreateFromParts({"HSET", "user:2", "name", "alice-2"});
   ASSERT_NE(set_update, nullptr);
-  response = set_update->Execute(&context_);
+  response = set_update->Execute();
   ASSERT_TRUE(response.status.ok());
   EXPECT_EQ(response.reply.integer(), 0);
 
   std::unique_ptr<minikv::Cmd> get =
       CreateFromParts({"HGETALL", "user:2"});
   ASSERT_NE(get, nullptr);
-  response = get->Execute(&context_);
+  response = get->Execute();
   ASSERT_TRUE(response.status.ok());
   ExpectBulkStringArray(response.reply, {"name", "alice-2"});
 }
 
-TEST_F(CmdExecutionTest, HDelExecuteRemovesFields) {
+TEST_F(ModuleRuntimeTest, HDelExecuteRemovesFields) {
   ASSERT_TRUE(hash_module_->PutField("user:3", "a", "1", nullptr).ok());
   ASSERT_TRUE(hash_module_->PutField("user:3", "b", "2", nullptr).ok());
 
@@ -328,7 +344,7 @@ TEST_F(CmdExecutionTest, HDelExecuteRemovesFields) {
       CreateFromParts({"HDEL", "user:3", "a", "b", "c"});
   ASSERT_NE(del, nullptr);
 
-  minikv::CommandResponse response = del->Execute(&context_);
+  minikv::CommandResponse response = del->Execute();
   ASSERT_TRUE(response.status.ok());
   ASSERT_TRUE(response.reply.IsInteger());
   EXPECT_EQ(response.reply.integer(), 2);
@@ -338,18 +354,18 @@ TEST_F(CmdExecutionTest, HDelExecuteRemovesFields) {
   EXPECT_TRUE(values.empty());
 }
 
-TEST_F(CmdExecutionTest, HashCommandsOnMissingKeyReturnEmptySuccess) {
+TEST_F(ModuleRuntimeTest, HashCommandsOnMissingKeyReturnEmptySuccess) {
   std::unique_ptr<minikv::Cmd> get =
       CreateFromParts({"HGETALL", "missing"});
   ASSERT_NE(get, nullptr);
-  minikv::CommandResponse response = get->Execute(&context_);
+  minikv::CommandResponse response = get->Execute();
   ASSERT_TRUE(response.status.ok());
   ExpectBulkStringArray(response.reply, {});
 
   std::unique_ptr<minikv::Cmd> del =
       CreateFromParts({"HDEL", "missing", "field"});
   ASSERT_NE(del, nullptr);
-  response = del->Execute(&context_);
+  response = del->Execute();
   ASSERT_TRUE(response.status.ok());
   ASSERT_TRUE(response.reply.IsInteger());
   EXPECT_EQ(response.reply.integer(), 0);
