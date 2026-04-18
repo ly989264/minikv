@@ -17,6 +17,7 @@
 #include "core/core_module.h"
 #include "core/key_service.h"
 #include "types/hash/hash_module.h"
+#include "types/list/list_module.h"
 #include "types/set/set_module.h"
 #include "rocksdb/db.h"
 
@@ -54,6 +55,7 @@ class HashModuleTest : public ::testing::Test {
     auto hash_module = std::make_unique<minikv::HashModule>();
     hash_module_ = hash_module.get();
     modules.push_back(std::move(hash_module));
+    modules.push_back(std::make_unique<minikv::ListModule>());
     modules.push_back(std::make_unique<minikv::SetModule>());
     module_manager_ = std::make_unique<minikv::ModuleManager>(
         storage_engine_.get(), scheduler_.get(), std::move(modules));

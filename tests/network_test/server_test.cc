@@ -44,6 +44,16 @@ std::string EncodeCommand(const std::vector<std::string>& parts) {
   return out;
 }
 
+void ExpectArrayTexts(const RespValue& value,
+                      const std::vector<std::string>& expected) {
+  ASSERT_EQ(value.type, RespValue::Type::kArray);
+  ASSERT_EQ(value.array.size(), expected.size());
+  for (size_t i = 0; i < expected.size(); ++i) {
+    ASSERT_EQ(value.array[i].type, RespValue::Type::kBulkString);
+    EXPECT_EQ(value.array[i].text, expected[i]);
+  }
+}
+
 void ExpectArrayTextsUnordered(const RespValue& value,
                                const std::vector<std::string>& expected) {
   ASSERT_EQ(value.type, RespValue::Type::kArray);
@@ -465,6 +475,83 @@ TEST_F(MiniKVServerTest, SetLifecycleAndRandomCommandsWorkOverNetwork) {
   ASSERT_EQ(reply.type, RespValue::Type::kNull);
 
   WriteAll(fd, EncodeCommand({"SRANDMEMBER", "set:1"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kNull);
+
+  close(fd);
+}
+
+TEST_F(MiniKVServerTest, ListLifecycleCommandsWorkOverNetwork) {
+  const int fd = ConnectToServer(server_->port());
+
+  WriteAll(fd, EncodeCommand({"RPUSH", "list:1", "a", "b", "c"}));
+  RespValue reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kInteger);
+  ASSERT_EQ(reply.integer, 3);
+
+  WriteAll(fd, EncodeCommand({"LPUSH", "list:1", "z"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kInteger);
+  ASSERT_EQ(reply.integer, 4);
+
+  WriteAll(fd, EncodeCommand({"LRANGE", "list:1", "0", "-1"}));
+  reply = ReadRespValue(fd);
+  ExpectArrayTexts(reply, {"z", "a", "b", "c"});
+
+  WriteAll(fd, EncodeCommand({"LPOP", "list:1"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kBulkString);
+  ASSERT_EQ(reply.text, "z");
+
+  WriteAll(fd, EncodeCommand({"RPOP", "list:1"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kBulkString);
+  ASSERT_EQ(reply.text, "c");
+
+  WriteAll(fd, EncodeCommand({"LREM", "list:1", "0", "b"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kInteger);
+  ASSERT_EQ(reply.integer, 1);
+
+  WriteAll(fd, EncodeCommand({"LTRIM", "list:1", "0", "0"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kSimpleString);
+  ASSERT_EQ(reply.text, "OK");
+
+  WriteAll(fd, EncodeCommand({"LLEN", "list:1"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kInteger);
+  ASSERT_EQ(reply.integer, 1);
+
+  WriteAll(fd, EncodeCommand({"LRANGE", "list:1", "0", "-1"}));
+  reply = ReadRespValue(fd);
+  ExpectArrayTexts(reply, {"a"});
+
+  WriteAll(fd, EncodeCommand({"TYPE", "list:1"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kBulkString);
+  ASSERT_EQ(reply.text, "list");
+
+  WriteAll(fd, EncodeCommand({"EXPIRE", "list:1", "0"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kInteger);
+  ASSERT_EQ(reply.integer, 1);
+
+  WriteAll(fd, EncodeCommand({"TYPE", "list:1"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kBulkString);
+  ASSERT_EQ(reply.text, "none");
+
+  WriteAll(fd, EncodeCommand({"EXISTS", "list:1"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kInteger);
+  ASSERT_EQ(reply.integer, 0);
+
+  WriteAll(fd, EncodeCommand({"LPOP", "list:1"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kNull);
+
+  WriteAll(fd, EncodeCommand({"RPOP", "list:1"}));
   reply = ReadRespValue(fd);
   ASSERT_EQ(reply.type, RespValue::Type::kNull);
 

@@ -72,6 +72,7 @@ set(MINIKV_INTERNAL_HEADERS
   src/types/hash/hash_module.h
   src/types/hash/hash_observer.h
   src/types/hash/hash_types.h
+  src/types/list/list_module.h
   src/types/set/set_module.h
   src/network/resp_parser.h
   src/execution/worker/key_lock_table.h
@@ -94,6 +95,7 @@ set(MINIKV_SOURCES
   src/core/core_module.cc
   src/core/key_service.cc
   src/types/hash/hash_module.cc
+  src/types/list/list_module.cc
   src/types/set/set_module.cc
   src/network/network_server.cc
   src/network/resp_parser.cc
@@ -141,6 +143,7 @@ if(BUILD_TESTING)
   minikv_add_test(minikv_command_registry_test
     tests/command_test/command_registry_test.cc)
   minikv_add_test(minikv_hash_module_test tests/type_test/hash_module_test.cc)
+  minikv_add_test(minikv_list_module_test tests/type_test/list_module_test.cc)
   minikv_add_test(minikv_set_module_test tests/type_test/set_module_test.cc)
   minikv_add_test(minikv_network_test tests/network_test/server_test.cc)
   minikv_add_test(minikv_reply_encode_test

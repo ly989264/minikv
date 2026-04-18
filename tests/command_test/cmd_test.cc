@@ -14,6 +14,7 @@
 #include "runtime/module/module_manager.h"
 #include "core/core_module.h"
 #include "types/hash/hash_module.h"
+#include "types/list/list_module.h"
 #include "types/set/set_module.h"
 #include "rocksdb/db.h"
 
@@ -167,6 +168,9 @@ class ModuleRuntimeTest : public ::testing::Test {
     auto hash_module = std::make_unique<minikv::HashModule>();
     hash_module_ = hash_module.get();
     modules.push_back(std::move(hash_module));
+    auto list_module = std::make_unique<minikv::ListModule>();
+    list_module_ = list_module.get();
+    modules.push_back(std::move(list_module));
     auto set_module = std::make_unique<minikv::SetModule>();
     set_module_ = set_module.get();
     modules.push_back(std::move(set_module));
@@ -204,6 +208,7 @@ class ModuleRuntimeTest : public ::testing::Test {
   std::unique_ptr<minikv::ModuleManager> module_manager_;
   std::unique_ptr<minikv::StorageEngine> storage_engine_;
   minikv::HashModule* hash_module_ = nullptr;
+  minikv::ListModule* list_module_ = nullptr;
   minikv::SetModule* set_module_ = nullptr;
 };
 
@@ -273,6 +278,54 @@ TEST_F(ModuleRuntimeTest, FindsRegisteredCommandsByName) {
   EXPECT_EQ(hdel->name, "HDEL");
   EXPECT_EQ(hdel->owner_module, "hash");
   ExpectFlags(hdel->flags, false, true, false, true);
+
+  const minikv::CmdRegistration* lpush = registry().Find("LPUSH");
+  ASSERT_NE(lpush, nullptr);
+  EXPECT_EQ(lpush->name, "LPUSH");
+  EXPECT_EQ(lpush->owner_module, "list");
+  ExpectFlags(lpush->flags, false, true, true, false);
+
+  const minikv::CmdRegistration* lpop = registry().Find("LPOP");
+  ASSERT_NE(lpop, nullptr);
+  EXPECT_EQ(lpop->name, "LPOP");
+  EXPECT_EQ(lpop->owner_module, "list");
+  ExpectFlags(lpop->flags, false, true, true, false);
+
+  const minikv::CmdRegistration* lrange = registry().Find("LRANGE");
+  ASSERT_NE(lrange, nullptr);
+  EXPECT_EQ(lrange->name, "LRANGE");
+  EXPECT_EQ(lrange->owner_module, "list");
+  ExpectFlags(lrange->flags, true, false, false, true);
+
+  const minikv::CmdRegistration* rpush = registry().Find("RPUSH");
+  ASSERT_NE(rpush, nullptr);
+  EXPECT_EQ(rpush->name, "RPUSH");
+  EXPECT_EQ(rpush->owner_module, "list");
+  ExpectFlags(rpush->flags, false, true, true, false);
+
+  const minikv::CmdRegistration* rpop = registry().Find("RPOP");
+  ASSERT_NE(rpop, nullptr);
+  EXPECT_EQ(rpop->name, "RPOP");
+  EXPECT_EQ(rpop->owner_module, "list");
+  ExpectFlags(rpop->flags, false, true, true, false);
+
+  const minikv::CmdRegistration* lrem = registry().Find("LREM");
+  ASSERT_NE(lrem, nullptr);
+  EXPECT_EQ(lrem->name, "LREM");
+  EXPECT_EQ(lrem->owner_module, "list");
+  ExpectFlags(lrem->flags, false, true, false, true);
+
+  const minikv::CmdRegistration* ltrim = registry().Find("LTRIM");
+  ASSERT_NE(ltrim, nullptr);
+  EXPECT_EQ(ltrim->name, "LTRIM");
+  EXPECT_EQ(ltrim->owner_module, "list");
+  ExpectFlags(ltrim->flags, false, true, false, true);
+
+  const minikv::CmdRegistration* llen = registry().Find("LLEN");
+  ASSERT_NE(llen, nullptr);
+  EXPECT_EQ(llen->name, "LLEN");
+  EXPECT_EQ(llen->owner_module, "list");
+  ExpectFlags(llen->flags, true, false, true, false);
 
   const minikv::CmdRegistration* sadd = registry().Find("SADD");
   ASSERT_NE(sadd, nullptr);
@@ -401,6 +454,25 @@ TEST_F(ModuleRuntimeTest, CreatesCommandsFromRespParts) {
   ASSERT_NE(lower, nullptr);
   EXPECT_EQ(lower->Name(), "HGETALL");
 
+  std::unique_ptr<minikv::Cmd> lpush;
+  ASSERT_TRUE(
+      minikv::CreateCmd(registry(), {"LPUSH", "list:1", "a", "b"}, &lpush)
+          .ok());
+  ASSERT_NE(lpush, nullptr);
+  EXPECT_EQ(lpush->Name(), "LPUSH");
+  EXPECT_EQ(lpush->RouteKey(), "list:1");
+  ExpectLockPlan(lpush->lock_plan(), minikv::Cmd::LockPlan::Kind::kSingle,
+                 "list:1", {});
+  ExpectFlags(lpush->Flags(), false, true, true, false);
+
+  std::unique_ptr<minikv::Cmd> lower_list;
+  ASSERT_TRUE(
+      minikv::CreateCmd(registry(), {"lrange", "list:1", "0", "-1"},
+                        &lower_list)
+          .ok());
+  ASSERT_NE(lower_list, nullptr);
+  EXPECT_EQ(lower_list->Name(), "LRANGE");
+
   std::unique_ptr<minikv::Cmd> sadd;
   ASSERT_TRUE(
       minikv::CreateCmd(registry(), {"SADD", "set:1", "a", "b", "a"}, &sadd)
@@ -451,6 +523,76 @@ TEST_F(ModuleRuntimeTest, RejectsBadArgumentsAndNullOutputs) {
   status = minikv::CreateCmd(registry(), {"HDEL", "user:1"}, &cmd);
   ASSERT_TRUE(status.IsInvalidArgument());
   EXPECT_NE(status.ToString().find("HDEL requires at least one field"),
+            std::string::npos);
+
+  status = minikv::CreateCmd(registry(), {"LPUSH", "list:1"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("LPUSH requires at least one element"),
+            std::string::npos);
+
+  status = minikv::CreateCmd(registry(), {"LPOP", "list:1", "extra"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("LPOP takes no extra arguments"),
+            std::string::npos);
+
+  status = minikv::CreateCmd(registry(), {"LRANGE", "list:1", "0"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("LRANGE requires start and stop"),
+            std::string::npos);
+
+  status =
+      minikv::CreateCmd(registry(), {"LRANGE", "list:1", "bad", "1"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("LRANGE requires integer start"),
+            std::string::npos);
+
+  status =
+      minikv::CreateCmd(registry(), {"LRANGE", "list:1", "0", "bad"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("LRANGE requires integer stop"),
+            std::string::npos);
+
+  status = minikv::CreateCmd(registry(), {"RPUSH", "list:1"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("RPUSH requires at least one element"),
+            std::string::npos);
+
+  status = minikv::CreateCmd(registry(), {"RPOP", "list:1", "extra"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("RPOP takes no extra arguments"),
+            std::string::npos);
+
+  status = minikv::CreateCmd(registry(), {"LREM", "list:1", "0"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("LREM requires count and element"),
+            std::string::npos);
+
+  status =
+      minikv::CreateCmd(registry(), {"LREM", "list:1", "bad", "a"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("LREM requires integer count"),
+            std::string::npos);
+
+  status = minikv::CreateCmd(registry(), {"LTRIM", "list:1", "0"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("LTRIM requires start and stop"),
+            std::string::npos);
+
+  status =
+      minikv::CreateCmd(registry(), {"LTRIM", "list:1", "bad", "1"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("LTRIM requires integer start"),
+            std::string::npos);
+
+  status =
+      minikv::CreateCmd(registry(), {"LTRIM", "list:1", "0", "bad"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("LTRIM requires integer stop"),
+            std::string::npos);
+
+  status = minikv::CreateCmd(registry(), {"LLEN", "list:1", "extra"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("LLEN takes no extra arguments"),
             std::string::npos);
 
   status = minikv::CreateCmd(registry(), {"SADD", "set:1"}, &cmd);
@@ -835,6 +977,68 @@ TEST_F(ModuleRuntimeTest, SetCommandsExecuteAgainstEngine) {
   ExpectMembersUnordered(members, {"b"});
 }
 
+TEST_F(ModuleRuntimeTest, ListCommandsExecuteAgainstEngine) {
+  std::unique_ptr<minikv::Cmd> rpush =
+      CreateFromParts({"RPUSH", "list:cmd", "a", "b", "c"});
+  ASSERT_NE(rpush, nullptr);
+  minikv::CommandResponse response = rpush->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsInteger());
+  EXPECT_EQ(response.reply.integer(), 3);
+
+  std::unique_ptr<minikv::Cmd> lpush =
+      CreateFromParts({"LPUSH", "list:cmd", "z"});
+  ASSERT_NE(lpush, nullptr);
+  response = lpush->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsInteger());
+  EXPECT_EQ(response.reply.integer(), 4);
+
+  response = CreateFromParts({"LLEN", "list:cmd"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsInteger());
+  EXPECT_EQ(response.reply.integer(), 4);
+
+  response = CreateFromParts({"LRANGE", "list:cmd", "0", "-1"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ExpectBulkStringArray(response.reply, {"z", "a", "b", "c"});
+
+  response = CreateFromParts({"LREM", "list:cmd", "1", "b"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsInteger());
+  EXPECT_EQ(response.reply.integer(), 1);
+
+  response = CreateFromParts({"LTRIM", "list:cmd", "0", "1"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsSimpleString());
+  EXPECT_EQ(response.reply.string(), "OK");
+
+  response = CreateFromParts({"LRANGE", "list:cmd", "0", "-1"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ExpectBulkStringArray(response.reply, {"z", "a"});
+}
+
+TEST_F(ModuleRuntimeTest, ListPopCommandsMatchExpectedSideEffects) {
+  ASSERT_TRUE(list_module_->PushRight("list:pop", {"a", "b"}, nullptr).ok());
+
+  minikv::CommandResponse response =
+      CreateFromParts({"LPOP", "list:pop"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ExpectBulkString(response.reply, "a");
+
+  response = CreateFromParts({"RPOP", "list:pop"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ExpectBulkString(response.reply, "b");
+
+  response = CreateFromParts({"LPOP", "list:pop"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  EXPECT_TRUE(response.reply.IsNull());
+
+  response = CreateFromParts({"RPOP", "list:pop"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  EXPECT_TRUE(response.reply.IsNull());
+}
+
 TEST_F(ModuleRuntimeTest, RandomSetCommandsMatchExpectedSideEffects) {
   ASSERT_TRUE(set_module_->AddMembers("set:rand", {"a", "b", "c"}, nullptr).ok());
 
@@ -897,6 +1101,36 @@ TEST_F(ModuleRuntimeTest, SetCommandsOnMissingKeyReturnEmptySuccess) {
   EXPECT_TRUE(response.reply.IsNull());
 }
 
+TEST_F(ModuleRuntimeTest, ListCommandsOnMissingKeyReturnEmptySuccess) {
+  minikv::CommandResponse response =
+      CreateFromParts({"LLEN", "missing-list"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsInteger());
+  EXPECT_EQ(response.reply.integer(), 0);
+
+  response = CreateFromParts({"LRANGE", "missing-list", "0", "-1"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ExpectBulkStringArray(response.reply, {});
+
+  response = CreateFromParts({"LREM", "missing-list", "0", "a"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsInteger());
+  EXPECT_EQ(response.reply.integer(), 0);
+
+  response = CreateFromParts({"LTRIM", "missing-list", "0", "1"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsSimpleString());
+  EXPECT_EQ(response.reply.string(), "OK");
+
+  response = CreateFromParts({"LPOP", "missing-list"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  EXPECT_TRUE(response.reply.IsNull());
+
+  response = CreateFromParts({"RPOP", "missing-list"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  EXPECT_TRUE(response.reply.IsNull());
+}
+
 TEST_F(ModuleRuntimeTest, TypeDelAndExpireExecuteAgainstSetKeys) {
   ASSERT_TRUE(set_module_->AddMembers("set:lifecycle", {"a", "b"}, nullptr).ok());
 
@@ -925,6 +1159,39 @@ TEST_F(ModuleRuntimeTest, TypeDelAndExpireExecuteAgainstSetKeys) {
   EXPECT_EQ(response.reply.integer(), 1);
 
   response = CreateFromParts({"EXISTS", "set:lifecycle"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsInteger());
+  EXPECT_EQ(response.reply.integer(), 0);
+}
+
+TEST_F(ModuleRuntimeTest, TypeDelAndExpireExecuteAgainstListKeys) {
+  ASSERT_TRUE(list_module_->PushRight("list:lifecycle", {"a", "b"}, nullptr).ok());
+
+  minikv::CommandResponse response =
+      CreateFromParts({"TYPE", "list:lifecycle"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ExpectBulkString(response.reply, "list");
+
+  response = CreateFromParts({"EXPIRE", "list:lifecycle", "0"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsInteger());
+  EXPECT_EQ(response.reply.integer(), 1);
+
+  response = CreateFromParts({"TYPE", "list:lifecycle"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ExpectBulkString(response.reply, "none");
+
+  response = CreateFromParts({"RPUSH", "list:lifecycle", "fresh"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsInteger());
+  EXPECT_EQ(response.reply.integer(), 1);
+
+  response = CreateFromParts({"DEL", "list:lifecycle"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsInteger());
+  EXPECT_EQ(response.reply.integer(), 1);
+
+  response = CreateFromParts({"EXISTS", "list:lifecycle"})->Execute();
   ASSERT_TRUE(response.status.ok());
   ASSERT_TRUE(response.reply.IsInteger());
   EXPECT_EQ(response.reply.integer(), 0);

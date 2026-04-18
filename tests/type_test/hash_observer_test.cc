@@ -15,6 +15,7 @@
 #include "core/key_service.h"
 #include "types/hash/hash_indexing_bridge.h"
 #include "types/hash/hash_module.h"
+#include "types/list/list_module.h"
 #include "types/hash/hash_observer.h"
 #include "types/set/set_module.h"
 #include "rocksdb/db.h"
@@ -113,6 +114,7 @@ class HashObserverTest : public ::testing::Test {
     modules.push_back(std::make_unique<minikv::CoreModule>());
     modules.push_back(std::move(lookup));
     modules.push_back(std::move(hash));
+    modules.push_back(std::make_unique<minikv::ListModule>());
     modules.push_back(std::make_unique<minikv::SetModule>());
 
     module_manager_ = std::make_unique<minikv::ModuleManager>(

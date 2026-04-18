@@ -17,6 +17,7 @@
 #include "runtime/module/module_manager.h"
 #include "core/core_module.h"
 #include "core/key_service.h"
+#include "types/list/list_module.h"
 #include "types/set/set_module.h"
 #include "rocksdb/db.h"
 
@@ -85,6 +86,7 @@ class SetModuleTest : public ::testing::Test {
     auto set_module = std::make_unique<minikv::SetModule>();
     set_module_ = set_module.get();
     modules.push_back(std::move(set_module));
+    modules.push_back(std::make_unique<minikv::ListModule>());
     module_manager_ = std::make_unique<minikv::ModuleManager>(
         storage_engine_.get(), scheduler_.get(), std::move(modules));
     ASSERT_TRUE(module_manager_->Initialize().ok());

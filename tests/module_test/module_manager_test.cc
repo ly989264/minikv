@@ -8,6 +8,7 @@
 #include "runtime/module/module_manager.h"
 #include "core/core_module.h"
 #include "types/hash/hash_module.h"
+#include "types/list/list_module.h"
 #include "types/set/set_module.h"
 
 namespace {
@@ -152,6 +153,7 @@ TEST(ModuleManagerTest, BuiltinModulesLoadIntoUnifiedRegistry) {
   std::vector<std::unique_ptr<minikv::Module>> modules;
   modules.push_back(std::make_unique<minikv::CoreModule>());
   modules.push_back(std::make_unique<minikv::HashModule>());
+  modules.push_back(std::make_unique<minikv::ListModule>());
   modules.push_back(std::make_unique<minikv::SetModule>());
 
   minikv::Scheduler scheduler(2, 16);
@@ -167,6 +169,18 @@ TEST(ModuleManagerTest, BuiltinModulesLoadIntoUnifiedRegistry) {
   const minikv::CmdRegistration* hgetall =
       manager.command_registry().Find("HGETALL");
   const minikv::CmdRegistration* hdel = manager.command_registry().Find("HDEL");
+  const minikv::CmdRegistration* lpush =
+      manager.command_registry().Find("LPUSH");
+  const minikv::CmdRegistration* lpop = manager.command_registry().Find("LPOP");
+  const minikv::CmdRegistration* lrange =
+      manager.command_registry().Find("LRANGE");
+  const minikv::CmdRegistration* rpush =
+      manager.command_registry().Find("RPUSH");
+  const minikv::CmdRegistration* rpop = manager.command_registry().Find("RPOP");
+  const minikv::CmdRegistration* lrem = manager.command_registry().Find("LREM");
+  const minikv::CmdRegistration* ltrim =
+      manager.command_registry().Find("LTRIM");
+  const minikv::CmdRegistration* llen = manager.command_registry().Find("LLEN");
   const minikv::CmdRegistration* sadd = manager.command_registry().Find("SADD");
   const minikv::CmdRegistration* scard =
       manager.command_registry().Find("SCARD");
@@ -186,6 +200,14 @@ TEST(ModuleManagerTest, BuiltinModulesLoadIntoUnifiedRegistry) {
   ASSERT_NE(hset, nullptr);
   ASSERT_NE(hgetall, nullptr);
   ASSERT_NE(hdel, nullptr);
+  ASSERT_NE(lpush, nullptr);
+  ASSERT_NE(lpop, nullptr);
+  ASSERT_NE(lrange, nullptr);
+  ASSERT_NE(rpush, nullptr);
+  ASSERT_NE(rpop, nullptr);
+  ASSERT_NE(lrem, nullptr);
+  ASSERT_NE(ltrim, nullptr);
+  ASSERT_NE(llen, nullptr);
   ASSERT_NE(sadd, nullptr);
   ASSERT_NE(scard, nullptr);
   ASSERT_NE(smembers, nullptr);
@@ -200,6 +222,14 @@ TEST(ModuleManagerTest, BuiltinModulesLoadIntoUnifiedRegistry) {
   EXPECT_EQ(hset->owner_module, "hash");
   EXPECT_EQ(hgetall->owner_module, "hash");
   EXPECT_EQ(hdel->owner_module, "hash");
+  EXPECT_EQ(lpush->owner_module, "list");
+  EXPECT_EQ(lpop->owner_module, "list");
+  EXPECT_EQ(lrange->owner_module, "list");
+  EXPECT_EQ(rpush->owner_module, "list");
+  EXPECT_EQ(rpop->owner_module, "list");
+  EXPECT_EQ(lrem->owner_module, "list");
+  EXPECT_EQ(ltrim->owner_module, "list");
+  EXPECT_EQ(llen->owner_module, "list");
   EXPECT_EQ(sadd->owner_module, "set");
   EXPECT_EQ(scard->owner_module, "set");
   EXPECT_EQ(smembers->owner_module, "set");
