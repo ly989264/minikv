@@ -2,12 +2,12 @@
 #include <string>
 #include <vector>
 
-#include "command/cmd.h"
+#include "execution/command/cmd.h"
 #include "gtest/gtest.h"
-#include "kernel/scheduler.h"
-#include "module/module_manager.h"
-#include "modules/core/core_module.h"
-#include "modules/hash/hash_module.h"
+#include "execution/scheduler/scheduler.h"
+#include "runtime/module/module_manager.h"
+#include "core/core_module.h"
+#include "types/hash/hash_module.h"
 
 namespace {
 

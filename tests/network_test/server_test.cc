@@ -12,8 +12,8 @@
 #include <vector>
 
 #include "gtest/gtest.h"
-#include "config.h"
-#include "minikv.h"
+#include "runtime/config.h"
+#include "runtime/minikv.h"
 #include "network/network_server.h"
 #include "rocksdb/db.h"
 

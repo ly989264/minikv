@@ -26,22 +26,27 @@ The current implementation is organized as:
 
 The responsibilities are:
 
-- `src/main.cc`: parses process flags, opens `MiniKV`, starts `NetworkServer`
-- `src/minikv.h` and `src/minikv.cc`: runtime owner for storage, shared
-  scheduler state, and builtin module loading
+- `src/app/main.cc`: parses process flags, opens `MiniKV`, starts
+  `NetworkServer`
+- `src/runtime/minikv.h` and `src/runtime/minikv.cc`: runtime owner for
+  storage, shared scheduler state, and builtin module loading
 - `src/network/network_server.h` and `src/network/`: TCP accept loop,
   per-I/O-thread connection management, RESP parsing, response encoding, and
   response reordering
-- `src/module/`: builtin module SPI, lifecycle, shared export registry, and
-  module service facades, module keyspace helpers, and background executor
-- `src/command/`: converts parsed RESP parts into registered `Cmd` objects
-- `src/kernel/`: scheduler, storage engine, snapshot, write context, command
-  registry, and reply helpers
-- `src/modules/core/`: protocol-level builtin commands such as `PING`
-- `src/modules/hash/`: hash builtin module, exported indexing bridge, observer
+- `src/runtime/module/`: builtin module SPI, lifecycle, shared export
+  registry, module service facades, module keyspace helpers, and background
+  executor
+- `src/execution/command/`: converts parsed RESP parts into registered `Cmd`
+  objects
+- `src/execution/registry/`, `src/execution/reply/`,
+  `src/execution/scheduler/`, and `src/execution/worker/`: command registry,
+  reply helpers, scheduler, keyed workers, and execution coordination
+- `src/core/`: protocol-level builtin commands and current core key lifecycle
+  services
+- `src/types/hash/`: hash builtin module, exported indexing bridge, observer
   interface, and command registrations
-- `src/codec/`: key and metadata encoding rules
-- `src/worker/`: worker queue and same-key serialized command execution
+- `src/storage/engine/` and `src/storage/encoding/`: RocksDB integration,
+  snapshots, write batching, and key/metadata encoding rules
 
 Public behavior is intentionally narrow today:
 

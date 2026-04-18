@@ -5,7 +5,7 @@
 #include <memory>
 #include <vector>
 
-#include "config.h"
+#include "runtime/config.h"
 #include "rocksdb/status.h"
 
 namespace minikv {

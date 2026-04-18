@@ -44,59 +44,60 @@ function(minikv_apply_runtime_path target)
 endfunction()
 
 set(MINIKV_RUNTIME_HEADERS
-  src/config.h
-  src/minikv.h
+  src/runtime/config.h
+  src/runtime/minikv.h
   src/network/network_server.h)
 
 set(MINIKV_INTERNAL_HEADERS
-  src/command/command_types.h
-  src/command/cmd.h
-  src/command/cmd_create.h
+  src/execution/command/command_types.h
+  src/execution/command/cmd.h
+  src/execution/command/cmd_create.h
   src/common/thread_name.h
-  src/codec/key_codec.h
-  src/kernel/command_registry.h
-  src/kernel/reply.h
-  src/kernel/reply_node.h
-  src/kernel/scheduler.h
-  src/kernel/snapshot.h
-  src/kernel/storage_engine.h
-  src/kernel/write_context.h
-  src/module/module.h
-  src/module/background_executor.h
-  src/module/module_manager.h
-  src/module/module_services.h
-  src/modules/core/core_module.h
-  src/modules/core/key_service.h
-  src/modules/hash/hash_indexing_bridge.h
-  src/modules/hash/hash_module.h
-  src/modules/hash/hash_observer.h
-  src/modules/hash/hash_types.h
+  src/storage/encoding/key_codec.h
+  src/execution/registry/command_registry.h
+  src/execution/reply/reply.h
+  src/execution/reply/reply_node.h
+  src/execution/scheduler/scheduler.h
+  src/storage/engine/snapshot.h
+  src/storage/engine/storage_engine.h
+  src/storage/engine/write_context.h
+  src/runtime/module/module.h
+  src/runtime/module/background_executor.h
+  src/runtime/module/module_manager.h
+  src/runtime/module/module_services.h
+  src/core/core_module.h
+  src/core/key_service.h
+  src/core/whole_key_delete_handler.h
+  src/types/hash/hash_indexing_bridge.h
+  src/types/hash/hash_module.h
+  src/types/hash/hash_observer.h
+  src/types/hash/hash_types.h
   src/network/resp_parser.h
-  src/worker/key_lock_table.h
-  src/worker/worker.h)
+  src/execution/worker/key_lock_table.h
+  src/execution/worker/worker.h)
 
 set(MINIKV_SOURCES
-  src/command/cmd.cc
-  src/command/cmd_create.cc
+  src/execution/command/cmd.cc
+  src/execution/command/cmd_create.cc
   src/common/thread_name.cc
-  src/codec/key_codec.cc
-  src/kernel/command_registry.cc
-  src/kernel/reply.cc
-  src/kernel/scheduler.cc
-  src/kernel/snapshot.cc
-  src/kernel/storage_engine.cc
-  src/kernel/write_context.cc
-  src/module/module_manager.cc
-  src/module/background_executor.cc
-  src/module/module_services.cc
-  src/modules/core/core_module.cc
-  src/modules/core/key_service.cc
-  src/modules/hash/hash_module.cc
+  src/storage/encoding/key_codec.cc
+  src/execution/registry/command_registry.cc
+  src/execution/reply/reply.cc
+  src/execution/scheduler/scheduler.cc
+  src/storage/engine/snapshot.cc
+  src/storage/engine/storage_engine.cc
+  src/storage/engine/write_context.cc
+  src/runtime/module/module_manager.cc
+  src/runtime/module/background_executor.cc
+  src/runtime/module/module_services.cc
+  src/core/core_module.cc
+  src/core/key_service.cc
+  src/types/hash/hash_module.cc
   src/network/network_server.cc
   src/network/resp_parser.cc
-  src/worker/key_lock_table.cc
-  src/worker/worker.cc
-  src/minikv.cc)
+  src/execution/worker/key_lock_table.cc
+  src/execution/worker/worker.cc
+  src/runtime/minikv.cc)
 
 add_library(minikv_core STATIC
   ${MINIKV_RUNTIME_HEADERS}
@@ -114,7 +115,7 @@ target_link_libraries(minikv_core
   PRIVATE
     Threads::Threads)
 
-add_executable(minikv_server src/main.cc)
+add_executable(minikv_server src/app/main.cc)
 target_link_libraries(minikv_server PRIVATE minikv_core)
 target_compile_features(minikv_server PRIVATE cxx_std_17)
 minikv_apply_runtime_path(minikv_server)

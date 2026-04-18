@@ -60,8 +60,8 @@ refreshes the bundle when the source commit changed.
 
 ## Project Layout
 
-- `src/config.h`, `src/minikv.h`, `src/network/network_server.h`: runtime and
-  network entry headers
+- `src/runtime/config.h`, `src/runtime/minikv.h`,
+  `src/network/network_server.h`: runtime and network entry headers
 - `src/`: implementation
 - `tests/`: unit and integration tests
 - `tools/`: build, smoke, and maintenance scripts

@@ -4,11 +4,11 @@
 
 This layer is defined by:
 
-- `src/command/command_types.h`
-- `src/command/cmd.h`
-- `src/command/cmd.cc`
-- `src/command/cmd_create.h`
-- `src/command/cmd_create.cc`
+- `src/execution/command/command_types.h`
+- `src/execution/command/cmd.h`
+- `src/execution/command/cmd.cc`
+- `src/execution/command/cmd_create.h`
+- `src/execution/command/cmd_create.cc`
 
 It maps parsed RESP command parts into executable operations.
 

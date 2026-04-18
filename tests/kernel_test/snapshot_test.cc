@@ -4,14 +4,14 @@
 #include <unistd.h>
 #include <vector>
 
-#include "codec/key_codec.h"
+#include "storage/encoding/key_codec.h"
 #include "gtest/gtest.h"
-#include "kernel/snapshot.h"
-#include "kernel/storage_engine.h"
-#include "kernel/write_context.h"
-#include "modules/core/key_service.h"
+#include "storage/engine/snapshot.h"
+#include "storage/engine/storage_engine.h"
+#include "storage/engine/write_context.h"
+#include "core/key_service.h"
 #include "rocksdb/db.h"
-#include "modules/hash/hash_types.h"
+#include "types/hash/hash_types.h"
 
 namespace {
 

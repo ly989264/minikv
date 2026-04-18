@@ -4,8 +4,8 @@
 
 This layer is defined by:
 
-- `src/codec/key_codec.h`
-- `src/codec/key_codec.cc`
+- `src/storage/encoding/key_codec.h`
+- `src/storage/encoding/key_codec.cc`
 
 It defines the on-disk key and metadata encoding used by the hash storage
 model.

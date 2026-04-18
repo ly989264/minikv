@@ -165,7 +165,7 @@ docker exec <container> sh -lc '
 
 ## Runtime Configuration Surface
 
-`src/main.cc` accepts:
+`src/app/main.cc` accepts:
 
 - `--db_path`
 - `--bind`
@@ -177,7 +177,7 @@ docker exec <container> sh -lc '
 - `--max_request_bytes`
 - `--idle_timeout_ms`
 
-Defaults are defined in `src/config.h`.
+Defaults are defined in `src/runtime/config.h`.
 
 ## Validation Notes
 

@@ -3,10 +3,10 @@
 #include <string>
 #include <unistd.h>
 
-#include "config.h"
+#include "runtime/config.h"
 #include "gtest/gtest.h"
-#include "kernel/storage_engine.h"
-#include "module/module_services.h"
+#include "storage/engine/storage_engine.h"
+#include "runtime/module/module_services.h"
 #include "rocksdb/db.h"
 
 namespace {

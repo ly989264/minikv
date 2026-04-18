@@ -11,9 +11,9 @@
 #include <thread>
 #include <vector>
 
-#include "command/cmd.h"
+#include "execution/command/cmd.h"
 #include "gtest/gtest.h"
-#include "kernel/scheduler.h"
+#include "execution/scheduler/scheduler.h"
 
 namespace {
 

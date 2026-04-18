@@ -5,18 +5,18 @@
 #include <unistd.h>
 #include <vector>
 
-#include "codec/key_codec.h"
-#include "config.h"
+#include "storage/encoding/key_codec.h"
+#include "runtime/config.h"
 #include "gtest/gtest.h"
-#include "kernel/scheduler.h"
-#include "kernel/storage_engine.h"
-#include "kernel/write_context.h"
-#include "module/module.h"
-#include "module/module_manager.h"
-#include "module/module_services.h"
-#include "modules/core/core_module.h"
-#include "modules/core/key_service.h"
-#include "modules/hash/hash_module.h"
+#include "execution/scheduler/scheduler.h"
+#include "storage/engine/storage_engine.h"
+#include "storage/engine/write_context.h"
+#include "runtime/module/module.h"
+#include "runtime/module/module_manager.h"
+#include "runtime/module/module_services.h"
+#include "core/core_module.h"
+#include "core/key_service.h"
+#include "types/hash/hash_module.h"
 #include "rocksdb/db.h"
 
 namespace {

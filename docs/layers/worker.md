@@ -4,12 +4,12 @@
 
 This layer is defined by:
 
-- `src/kernel/scheduler.h`
-- `src/kernel/scheduler.cc`
-- `src/worker/key_lock_table.h`
-- `src/worker/key_lock_table.cc`
-- `src/worker/worker.h`
-- `src/worker/worker.cc`
+- `src/execution/scheduler/scheduler.h`
+- `src/execution/scheduler/scheduler.cc`
+- `src/execution/worker/key_lock_table.h`
+- `src/execution/worker/key_lock_table.cc`
+- `src/execution/worker/worker.h`
+- `src/execution/worker/worker.cc`
 
 It owns queueing, worker fan-out, keyed serialization, and backpressure.
 

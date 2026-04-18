@@ -2,7 +2,7 @@
 #include <string>
 
 #include "gtest/gtest.h"
-#include "kernel/command_registry.h"
+#include "execution/registry/command_registry.h"
 
 namespace {
 

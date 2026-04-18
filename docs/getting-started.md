@@ -22,7 +22,7 @@ There is no parallel function-call command surface to keep in sync.
 
 ## Architecture And Class Map
 
-### `src/main.cc`
+### `src/app/main.cc`
 
 Process entrypoint.
 
@@ -31,7 +31,7 @@ Process entrypoint.
 - creates `NetworkServer`
 - runs the server until shutdown
 
-### `src/minikv.h` and `src/minikv.cc`
+### `src/runtime/minikv.h` and `src/runtime/minikv.cc`
 
 Runtime owner.
 
@@ -50,7 +50,7 @@ Important behavior:
 - `MiniKV` does not expose command execution helpers
 - `MiniKV` exists to share runtime state with `NetworkServer`
 
-### `src/module/*`
+### `src/runtime/module/*`
 
 Builtin module SPI and lifecycle management.
 
@@ -82,7 +82,7 @@ Network and connection-management layer.
 - writing encoded RESP responses
 - idle timeout and orderly shutdown
 
-### `src/command/*`
+### `src/execution/command/*`
 
 Command creation and execution.
 
@@ -93,7 +93,7 @@ This layer:
 - performs command-specific validation and route-key derivation
 - executes through module-bound command objects
 
-### `src/kernel/scheduler.*` and `src/worker/*`
+### `src/execution/scheduler/scheduler.*` and `src/execution/worker/*`
 
 Concurrency core.
 
@@ -111,7 +111,7 @@ Correctness rule:
 - execute `Cmd::Execute()`
 - release the key lock after completion
 
-### `src/kernel/storage_engine.*`
+### `src/storage/engine/storage_engine.*`
 
 RocksDB integration layer.
 
@@ -128,14 +128,14 @@ Current column families:
 - `meta`
 - `hash`
 
-### `src/kernel/snapshot.*` and `src/kernel/write_context.*`
+### `src/storage/engine/snapshot.*` and `src/storage/engine/write_context.*`
 
 Read and write helpers.
 
 - `Snapshot` pins one RocksDB snapshot and serves consistent reads
 - `WriteContext` owns one logical write batch and commits it once
 
-### `src/modules/hash/*`
+### `src/types/hash/*`
 
 Hash semantics layer.
 
@@ -152,7 +152,7 @@ Current design rules:
 - writes go through `ModuleWriteBatch`
 - the current module boundary is builtin-only, with no external ABI
 
-### `src/codec/key_codec.*`
+### `src/storage/encoding/key_codec.*`
 
 Storage-key encoding layer.
 

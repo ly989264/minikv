@@ -2,7 +2,7 @@
 
 `HashModule` is now the first builtin data module in `minikv`.
 
-It lives under `src/modules/hash/` and is loaded by `ModuleManager` during
+It lives under `src/types/hash/` and is loaded by `ModuleManager` during
 `MiniKV::Open()` after `CoreModule`.
 
 ## What It Owns
@@ -15,7 +15,7 @@ It lives under `src/modules/hash/` and is loaded by `ModuleManager` during
 - hash read/write semantics on top of `ModuleSnapshot` and `ModuleWriteBatch`
 
 The hash module no longer depends on a special-case command path in
-`src/command/`.
+`src/execution/command/`.
 
 ## Registration Path
 

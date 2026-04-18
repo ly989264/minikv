@@ -6,11 +6,11 @@
 #include <vector>
 
 #include "gtest/gtest.h"
-#include "kernel/scheduler.h"
-#include "module/background_executor.h"
-#include "module/module.h"
-#include "module/module_manager.h"
-#include "module/module_services.h"
+#include "execution/scheduler/scheduler.h"
+#include "runtime/module/background_executor.h"
+#include "runtime/module/module.h"
+#include "runtime/module/module_manager.h"
+#include "runtime/module/module_services.h"
 
 namespace {
 

@@ -24,11 +24,11 @@
 #include <utility>
 #include <vector>
 
-#include "command/cmd_create.h"
-#include "command/command_types.h"
+#include "execution/command/cmd_create.h"
+#include "execution/command/command_types.h"
 #include "common/thread_name.h"
-#include "kernel/scheduler.h"
-#include "minikv.h"
+#include "execution/scheduler/scheduler.h"
+#include "runtime/minikv.h"
 #include "network/resp_parser.h"
 
 namespace minikv {

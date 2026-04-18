@@ -4,8 +4,8 @@
 
 This layer is defined by:
 
-- `src/minikv.h`
-- `src/minikv.cc`
+- `src/runtime/minikv.h`
+- `src/runtime/minikv.cc`
 
 It is the runtime owner for the current process. It is not a command API.
 
