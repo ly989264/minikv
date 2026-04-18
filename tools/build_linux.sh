@@ -12,6 +12,7 @@ BUNDLE_DIR="${REPO_ROOT}/third_party/rocksdb/linux-x86_64"
 GTEST_DIR="${REPO_ROOT}/third_party/googletest"
 SKIP_TESTS=0
 FORCE_BUNDLE_REFRESH=0
+EXPORT_COMPILE_COMMANDS=1
 
 usage() {
   cat <<'EOF'
@@ -20,11 +21,13 @@ Usage:
                        [--rocksdb-source-dir DIR]
                        [--rocksdb-reuse-build-dir DIR]
                        [--force-bundle-refresh]
+                       [--no-compile-commands]
                        [--skip-tests]
 
 Defaults:
   --build-dir build
   --build-type Debug
+  compile_commands.json exported
   tests enabled
 
 Examples:
@@ -63,6 +66,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --skip-tests)
       SKIP_TESTS=1
+      shift
+      ;;
+    --no-compile-commands)
+      EXPORT_COMPILE_COMMANDS=0
       shift
       ;;
     -h|--help)
@@ -126,6 +133,7 @@ cmake_args=(
   -S "${REPO_ROOT}"
   -B "${BUILD_DIR}"
   -DCMAKE_BUILD_TYPE="${BUILD_TYPE}"
+  "-DCMAKE_EXPORT_COMPILE_COMMANDS=$( (( EXPORT_COMPILE_COMMANDS )) && echo ON || echo OFF )"
 )
 
 if [[ "${bundle_ready}" -eq 1 ]]; then
@@ -146,6 +154,14 @@ if [[ -f "${GTEST_DIR}/CMakeLists.txt" ]]; then
 fi
 
 cmake "${cmake_args[@]}"
+
+if [[ "${EXPORT_COMPILE_COMMANDS}" -eq 1 && -f "${BUILD_DIR}/compile_commands.json" ]]; then
+  if [[ "${BUILD_DIR}" == "${REPO_ROOT}"/* ]]; then
+    compile_commands_link_target="${BUILD_DIR#${REPO_ROOT}/}/compile_commands.json"
+    ln -sfn "${compile_commands_link_target}" "${REPO_ROOT}/compile_commands.json"
+  fi
+fi
+
 cmake --build "${BUILD_DIR}" --parallel "${JOBS}"
 
 if [[ "${SKIP_TESTS}" -eq 0 ]]; then
@@ -172,3 +188,6 @@ if [[ "${SKIP_TESTS}" -eq 0 ]]; then
 fi
 
 echo "build dir: ${BUILD_DIR}"
+if [[ "${EXPORT_COMPILE_COMMANDS}" -eq 1 && -f "${BUILD_DIR}/compile_commands.json" ]]; then
+  echo "compile commands: ${BUILD_DIR}/compile_commands.json"
+fi

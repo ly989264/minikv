@@ -25,6 +25,18 @@ Build with the committed RocksDB bundle and vendored googletest:
 ./tools/build_linux.sh
 ```
 
+That flow also exports `build/compile_commands.json` for clangd-compatible
+tooling. When the build directory lives under the repository root, the script
+refreshes a top-level `compile_commands.json` symlink so editors such as VS
+Code can discover it more easily.
+
+If you build inside the Linux container but run VS Code + clangd on the macOS
+host, rewrite the container paths for the host workspace with:
+
+```bash
+python3 tools/export_compile_commands.py
+```
+
 If you have a local RocksDB checkout and want to refresh the committed bundle
 first:
 

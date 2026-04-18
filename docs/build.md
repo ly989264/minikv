@@ -81,10 +81,14 @@ Bundle maintenance is documented separately in
 Default standalone configure/build/test flow using the committed bundle:
 
 ```bash
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 cmake --build build --parallel 8
 ctest --test-dir build --output-on-failure
 ```
+
+`compile_commands.json` is enabled by default for fresh CMake configure runs in
+this repository, but the explicit flag above is still useful when refreshing an
+existing build directory that was configured before that default was added.
 
 Refreshing the bundle from a local RocksDB checkout, then building against the
 bundle:
@@ -104,6 +108,23 @@ Helper script:
   --rocksdb-reuse-build-dir /path/to/rocksdb/build-minikv
 ```
 
+By default, `tools/build_linux.sh` also exports
+`build/compile_commands.json`. When the build directory is inside the
+repository, it refreshes a top-level `compile_commands.json` symlink for clangd
+and similar editor tooling. Pass `--no-compile-commands` if you want to skip
+that export.
+
+If your authoritative build ran inside the Linux container but your editor is a
+host-side VS Code window on macOS, rewrite the recorded container paths for the
+host workspace after the build:
+
+```bash
+python3 tools/export_compile_commands.py
+```
+
+That command reads `build/compile_commands.json` and `build/CMakeCache.txt`,
+then writes a host-friendly top-level `compile_commands.json`.
+
 ## Container Workflow
 
 In this workspace, the authoritative verification path is still the Linux Docker
@@ -115,6 +136,7 @@ Representative commands:
 docker exec <container> sh -lc '
   cd /workspace/projects/OpenSource/minikv &&
   cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug \
+    -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
     -DMINIKV_USE_BUNDLED_ROCKSDB=ON
 '
 

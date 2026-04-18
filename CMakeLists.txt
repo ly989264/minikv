@@ -1,5 +1,10 @@
 cmake_minimum_required(VERSION 3.20)
 
+if(NOT DEFINED CMAKE_EXPORT_COMPILE_COMMANDS)
+  set(CMAKE_EXPORT_COMPILE_COMMANDS ON CACHE BOOL
+      "Generate compile_commands.json for clangd and other tooling")
+endif()
+
 project(minikv LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
