@@ -9,6 +9,7 @@
 #include "core/core_module.h"
 #include "types/hash/hash_module.h"
 #include "types/list/list_module.h"
+#include "types/string/string_module.h"
 #include "types/set/set_module.h"
 
 namespace {
@@ -152,6 +153,7 @@ TEST(ModuleManagerTest, RejectsCommandNameConflictsDuringLoad) {
 TEST(ModuleManagerTest, BuiltinModulesLoadIntoUnifiedRegistry) {
   std::vector<std::unique_ptr<minikv::Module>> modules;
   modules.push_back(std::make_unique<minikv::CoreModule>());
+  modules.push_back(std::make_unique<minikv::StringModule>());
   modules.push_back(std::make_unique<minikv::HashModule>());
   modules.push_back(std::make_unique<minikv::ListModule>());
   modules.push_back(std::make_unique<minikv::SetModule>());
@@ -169,6 +171,10 @@ TEST(ModuleManagerTest, BuiltinModulesLoadIntoUnifiedRegistry) {
   const minikv::CmdRegistration* hgetall =
       manager.command_registry().Find("HGETALL");
   const minikv::CmdRegistration* hdel = manager.command_registry().Find("HDEL");
+  const minikv::CmdRegistration* set = manager.command_registry().Find("SET");
+  const minikv::CmdRegistration* get = manager.command_registry().Find("GET");
+  const minikv::CmdRegistration* strlen =
+      manager.command_registry().Find("STRLEN");
   const minikv::CmdRegistration* lpush =
       manager.command_registry().Find("LPUSH");
   const minikv::CmdRegistration* lpop = manager.command_registry().Find("LPOP");
@@ -200,6 +206,9 @@ TEST(ModuleManagerTest, BuiltinModulesLoadIntoUnifiedRegistry) {
   ASSERT_NE(hset, nullptr);
   ASSERT_NE(hgetall, nullptr);
   ASSERT_NE(hdel, nullptr);
+  ASSERT_NE(set, nullptr);
+  ASSERT_NE(get, nullptr);
+  ASSERT_NE(strlen, nullptr);
   ASSERT_NE(lpush, nullptr);
   ASSERT_NE(lpop, nullptr);
   ASSERT_NE(lrange, nullptr);
@@ -222,6 +231,9 @@ TEST(ModuleManagerTest, BuiltinModulesLoadIntoUnifiedRegistry) {
   EXPECT_EQ(hset->owner_module, "hash");
   EXPECT_EQ(hgetall->owner_module, "hash");
   EXPECT_EQ(hdel->owner_module, "hash");
+  EXPECT_EQ(set->owner_module, "string");
+  EXPECT_EQ(get->owner_module, "string");
+  EXPECT_EQ(strlen->owner_module, "string");
   EXPECT_EQ(lpush->owner_module, "list");
   EXPECT_EQ(lpop->owner_module, "list");
   EXPECT_EQ(lrange->owner_module, "list");

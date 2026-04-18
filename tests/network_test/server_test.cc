@@ -481,6 +481,85 @@ TEST_F(MiniKVServerTest, SetLifecycleAndRandomCommandsWorkOverNetwork) {
   close(fd);
 }
 
+TEST_F(MiniKVServerTest, StringLifecycleCommandsWorkOverNetwork) {
+  const int fd = ConnectToServer(server_->port());
+
+  WriteAll(fd, EncodeCommand({"SET", "str:1", "hello"}));
+  RespValue reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kSimpleString);
+  ASSERT_EQ(reply.text, "OK");
+
+  WriteAll(fd, EncodeCommand({"GET", "str:1"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kBulkString);
+  ASSERT_EQ(reply.text, "hello");
+
+  WriteAll(fd, EncodeCommand({"STRLEN", "str:1"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kInteger);
+  ASSERT_EQ(reply.integer, 5);
+
+  WriteAll(fd, EncodeCommand({"SET", "str:1", ""}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kSimpleString);
+  ASSERT_EQ(reply.text, "OK");
+
+  WriteAll(fd, EncodeCommand({"GET", "str:1"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kBulkString);
+  ASSERT_TRUE(reply.text.empty());
+
+  WriteAll(fd, EncodeCommand({"STRLEN", "str:1"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kInteger);
+  ASSERT_EQ(reply.integer, 0);
+
+  WriteAll(fd, EncodeCommand({"TYPE", "str:1"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kBulkString);
+  ASSERT_EQ(reply.text, "string");
+
+  WriteAll(fd, EncodeCommand({"EXPIRE", "str:1", "0"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kInteger);
+  ASSERT_EQ(reply.integer, 1);
+
+  WriteAll(fd, EncodeCommand({"TYPE", "str:1"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kBulkString);
+  ASSERT_EQ(reply.text, "none");
+
+  WriteAll(fd, EncodeCommand({"EXISTS", "str:1"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kInteger);
+  ASSERT_EQ(reply.integer, 0);
+
+  WriteAll(fd, EncodeCommand({"GET", "str:1"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kNull);
+
+  WriteAll(fd, EncodeCommand({"STRLEN", "str:1"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kInteger);
+  ASSERT_EQ(reply.integer, 0);
+
+  WriteAll(fd, EncodeCommand({"SET", "str:1", "fresh"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kSimpleString);
+  ASSERT_EQ(reply.text, "OK");
+
+  WriteAll(fd, EncodeCommand({"DEL", "str:1"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kInteger);
+  ASSERT_EQ(reply.integer, 1);
+
+  WriteAll(fd, EncodeCommand({"GET", "str:1"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kNull);
+
+  close(fd);
+}
+
 TEST_F(MiniKVServerTest, ListLifecycleCommandsWorkOverNetwork) {
   const int fd = ConnectToServer(server_->port());
 

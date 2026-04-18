@@ -15,6 +15,7 @@
 #include "core/core_module.h"
 #include "types/hash/hash_module.h"
 #include "types/list/list_module.h"
+#include "types/string/string_module.h"
 #include "types/set/set_module.h"
 #include "rocksdb/db.h"
 
@@ -168,6 +169,9 @@ class ModuleRuntimeTest : public ::testing::Test {
     auto hash_module = std::make_unique<minikv::HashModule>();
     hash_module_ = hash_module.get();
     modules.push_back(std::move(hash_module));
+    auto string_module = std::make_unique<minikv::StringModule>();
+    string_module_ = string_module.get();
+    modules.push_back(std::move(string_module));
     auto list_module = std::make_unique<minikv::ListModule>();
     list_module_ = list_module.get();
     modules.push_back(std::move(list_module));
@@ -208,6 +212,7 @@ class ModuleRuntimeTest : public ::testing::Test {
   std::unique_ptr<minikv::ModuleManager> module_manager_;
   std::unique_ptr<minikv::StorageEngine> storage_engine_;
   minikv::HashModule* hash_module_ = nullptr;
+  minikv::StringModule* string_module_ = nullptr;
   minikv::ListModule* list_module_ = nullptr;
   minikv::SetModule* set_module_ = nullptr;
 };
@@ -266,6 +271,24 @@ TEST_F(ModuleRuntimeTest, FindsRegisteredCommandsByName) {
   EXPECT_EQ(hset->name, "HSET");
   EXPECT_EQ(hset->owner_module, "hash");
   ExpectFlags(hset->flags, false, true, true, false);
+
+  const minikv::CmdRegistration* set = registry().Find("SET");
+  ASSERT_NE(set, nullptr);
+  EXPECT_EQ(set->name, "SET");
+  EXPECT_EQ(set->owner_module, "string");
+  ExpectFlags(set->flags, false, true, true, false);
+
+  const minikv::CmdRegistration* get = registry().Find("GET");
+  ASSERT_NE(get, nullptr);
+  EXPECT_EQ(get->name, "GET");
+  EXPECT_EQ(get->owner_module, "string");
+  ExpectFlags(get->flags, true, false, true, false);
+
+  const minikv::CmdRegistration* strlen = registry().Find("STRLEN");
+  ASSERT_NE(strlen, nullptr);
+  EXPECT_EQ(strlen->name, "STRLEN");
+  EXPECT_EQ(strlen->owner_module, "string");
+  ExpectFlags(strlen->flags, true, false, true, false);
 
   const minikv::CmdRegistration* hgetall = registry().Find("HGETALL");
   ASSERT_NE(hgetall, nullptr);
@@ -454,6 +477,21 @@ TEST_F(ModuleRuntimeTest, CreatesCommandsFromRespParts) {
   ASSERT_NE(lower, nullptr);
   EXPECT_EQ(lower->Name(), "HGETALL");
 
+  std::unique_ptr<minikv::Cmd> set;
+  ASSERT_TRUE(minikv::CreateCmd(registry(), {"SET", "str:1", "value"}, &set).ok());
+  ASSERT_NE(set, nullptr);
+  EXPECT_EQ(set->Name(), "SET");
+  EXPECT_EQ(set->RouteKey(), "str:1");
+  ExpectLockPlan(set->lock_plan(), minikv::Cmd::LockPlan::Kind::kSingle,
+                 "str:1", {});
+  ExpectFlags(set->Flags(), false, true, true, false);
+
+  std::unique_ptr<minikv::Cmd> lower_string;
+  ASSERT_TRUE(minikv::CreateCmd(registry(), {"get", "str:1"}, &lower_string)
+                  .ok());
+  ASSERT_NE(lower_string, nullptr);
+  EXPECT_EQ(lower_string->Name(), "GET");
+
   std::unique_ptr<minikv::Cmd> lpush;
   ASSERT_TRUE(
       minikv::CreateCmd(registry(), {"LPUSH", "list:1", "a", "b"}, &lpush)
@@ -518,6 +556,24 @@ TEST_F(ModuleRuntimeTest, RejectsBadArgumentsAndNullOutputs) {
   status = minikv::CreateCmd(registry(), {"HGETALL", "user:1", "extra"}, &cmd);
   ASSERT_TRUE(status.IsInvalidArgument());
   EXPECT_NE(status.ToString().find("HGETALL takes no extra arguments"),
+            std::string::npos);
+
+  status = minikv::CreateCmd(registry(), {"SET", "str:1"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("SET requires value"), std::string::npos);
+
+  status = minikv::CreateCmd(registry(), {"SET", "str:1", "a", "b"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("SET requires value"), std::string::npos);
+
+  status = minikv::CreateCmd(registry(), {"GET", "str:1", "extra"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("GET takes no extra arguments"),
+            std::string::npos);
+
+  status = minikv::CreateCmd(registry(), {"STRLEN", "str:1", "extra"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("STRLEN takes no extra arguments"),
             std::string::npos);
 
   status = minikv::CreateCmd(registry(), {"HDEL", "user:1"}, &cmd);
@@ -762,6 +818,16 @@ TEST_F(ModuleRuntimeTest, EmptyStringKeyRemainsValidForHashCommands) {
                  {});
 }
 
+TEST_F(ModuleRuntimeTest, EmptyStringKeyRemainsValidForStringCommands) {
+  std::unique_ptr<minikv::Cmd> cmd;
+  ASSERT_TRUE(minikv::CreateCmd(registry(), {"GET", ""}, &cmd).ok());
+  ASSERT_NE(cmd, nullptr);
+  EXPECT_EQ(cmd->RouteKey(), "");
+  EXPECT_EQ(cmd->Name(), "GET");
+  ExpectLockPlan(cmd->lock_plan(), minikv::Cmd::LockPlan::Kind::kSingle, "",
+                 {});
+}
+
 TEST_F(ModuleRuntimeTest, PingExecuteReturnsPong) {
   std::unique_ptr<minikv::Cmd> ping = CreateFromParts({"PING"});
   ASSERT_NE(ping, nullptr);
@@ -912,6 +978,44 @@ TEST_F(ModuleRuntimeTest, HSetAndHGetAllExecuteAgainstEngine) {
   response = get->Execute();
   ASSERT_TRUE(response.status.ok());
   ExpectBulkStringArray(response.reply, {"name", "alice-2"});
+}
+
+TEST_F(ModuleRuntimeTest, StringCommandsExecuteAgainstEngine) {
+  std::unique_ptr<minikv::Cmd> set =
+      CreateFromParts({"SET", "str:cmd", "hello"});
+  ASSERT_NE(set, nullptr);
+  minikv::CommandResponse response = set->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsSimpleString());
+  EXPECT_EQ(response.reply.string(), "OK");
+
+  std::unique_ptr<minikv::Cmd> get = CreateFromParts({"GET", "str:cmd"});
+  ASSERT_NE(get, nullptr);
+  response = get->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ExpectBulkString(response.reply, "hello");
+
+  std::unique_ptr<minikv::Cmd> strlen =
+      CreateFromParts({"STRLEN", "str:cmd"});
+  ASSERT_NE(strlen, nullptr);
+  response = strlen->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsInteger());
+  EXPECT_EQ(response.reply.integer(), 5);
+
+  response = CreateFromParts({"SET", "str:cmd", ""})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsSimpleString());
+  EXPECT_EQ(response.reply.string(), "OK");
+
+  response = get->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ExpectBulkString(response.reply, "");
+
+  response = strlen->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsInteger());
+  EXPECT_EQ(response.reply.integer(), 0);
 }
 
 TEST_F(ModuleRuntimeTest, HDelExecuteRemovesFields) {
@@ -1101,6 +1205,18 @@ TEST_F(ModuleRuntimeTest, SetCommandsOnMissingKeyReturnEmptySuccess) {
   EXPECT_TRUE(response.reply.IsNull());
 }
 
+TEST_F(ModuleRuntimeTest, StringCommandsOnMissingKeyReturnEmptySuccess) {
+  minikv::CommandResponse response =
+      CreateFromParts({"GET", "missing-string"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  EXPECT_TRUE(response.reply.IsNull());
+
+  response = CreateFromParts({"STRLEN", "missing-string"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsInteger());
+  EXPECT_EQ(response.reply.integer(), 0);
+}
+
 TEST_F(ModuleRuntimeTest, ListCommandsOnMissingKeyReturnEmptySuccess) {
   minikv::CommandResponse response =
       CreateFromParts({"LLEN", "missing-list"})->Execute();
@@ -1159,6 +1275,39 @@ TEST_F(ModuleRuntimeTest, TypeDelAndExpireExecuteAgainstSetKeys) {
   EXPECT_EQ(response.reply.integer(), 1);
 
   response = CreateFromParts({"EXISTS", "set:lifecycle"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsInteger());
+  EXPECT_EQ(response.reply.integer(), 0);
+}
+
+TEST_F(ModuleRuntimeTest, TypeDelAndExpireExecuteAgainstStringKeys) {
+  ASSERT_TRUE(string_module_->SetValue("str:lifecycle", "hello").ok());
+
+  minikv::CommandResponse response =
+      CreateFromParts({"TYPE", "str:lifecycle"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ExpectBulkString(response.reply, "string");
+
+  response = CreateFromParts({"EXPIRE", "str:lifecycle", "0"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsInteger());
+  EXPECT_EQ(response.reply.integer(), 1);
+
+  response = CreateFromParts({"TYPE", "str:lifecycle"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ExpectBulkString(response.reply, "none");
+
+  response = CreateFromParts({"SET", "str:lifecycle", "fresh"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsSimpleString());
+  EXPECT_EQ(response.reply.string(), "OK");
+
+  response = CreateFromParts({"DEL", "str:lifecycle"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsInteger());
+  EXPECT_EQ(response.reply.integer(), 1);
+
+  response = CreateFromParts({"EXISTS", "str:lifecycle"})->Execute();
   ASSERT_TRUE(response.status.ok());
   ASSERT_TRUE(response.reply.IsInteger());
   EXPECT_EQ(response.reply.integer(), 0);
@@ -1228,6 +1377,27 @@ TEST_F(ModuleRuntimeTest, TypeAndExistsOnMissingKeyReturnNoneAndZero) {
   ASSERT_TRUE(response.status.ok());
   ASSERT_TRUE(response.reply.IsInteger());
   EXPECT_EQ(response.reply.integer(), 0);
+}
+
+TEST_F(ModuleRuntimeTest, StringCommandsRejectWrongTypeKeys) {
+  ASSERT_TRUE(hash_module_->PutField("user:string-wrong", "name", "alice", nullptr)
+                  .ok());
+
+  minikv::CommandResponse response =
+      CreateFromParts({"GET", "user:string-wrong"})->Execute();
+  ASSERT_TRUE(response.status.IsInvalidArgument());
+  EXPECT_NE(response.status.ToString().find("key type mismatch"),
+            std::string::npos);
+
+  response = CreateFromParts({"SET", "user:string-wrong", "value"})->Execute();
+  ASSERT_TRUE(response.status.IsInvalidArgument());
+  EXPECT_NE(response.status.ToString().find("key type mismatch"),
+            std::string::npos);
+
+  response = CreateFromParts({"STRLEN", "user:string-wrong"})->Execute();
+  ASSERT_TRUE(response.status.IsInvalidArgument());
+  EXPECT_NE(response.status.ToString().find("key type mismatch"),
+            std::string::npos);
 }
 
 TEST_F(ModuleRuntimeTest, DelExecuteRemovesMultipleKeys) {
