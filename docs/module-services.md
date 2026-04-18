@@ -7,6 +7,7 @@ modules. Modules must not reach around it for private runtime objects such as
 Current services are:
 
 - `command_registry`
+- `exports`
 - `storage`
 - `snapshot`
 - `scheduler`
@@ -28,6 +29,27 @@ Responsibilities:
 Conflicts are case-insensitive because command names are normalized before
 insertion.
 
+## `exports`
+
+Type: `ModuleExportRegistry`
+
+Responsibilities:
+
+- publish typed module-owned exports into the shared module registry
+- qualify local export names with the owning module namespace
+- allow typed lookup by other modules without sharing private implementation
+  pointers
+- reject publish calls made outside the module startup window
+- clear published exports during rollback and module shutdown
+
+Current rules:
+
+- providers publish during `OnLoad()` or `OnStart()`
+- the current hash bridge publishes `hash.indexing_bridge` during `OnLoad()`
+- consumers resolve and bind exports during `OnStart()`
+- lookup is typed, so providers must publish the interface type they intend
+  consumers to request
+
 ## `storage`
 
 Type: `ModuleStorage`
@@ -39,6 +61,15 @@ Responsibilities:
 
 Modules can mutate storage through this service, but they cannot access the raw
 kernel write path directly.
+
+Current hash observer behavior also depends on this boundary:
+
+- `HashObserver::OnHashMutation()` receives the same `ModuleWriteBatch` as the
+  base hash write
+- observers may append `Put()` and `Delete()` operations to that batch
+- `HashModule` still owns `Commit()`
+- if any observer returns an error, the shared batch is never committed and the
+  base write fails as a whole
 
 ## `snapshot`
 

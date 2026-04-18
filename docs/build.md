@@ -3,7 +3,7 @@
 ## Scope
 
 This document records how the standalone `minikv` project is configured, built,
-and verified under `cancer_redis/minikv`.
+and verified in this standalone `minikv/` workspace.
 
 ## Standalone Build Layout
 
@@ -15,7 +15,10 @@ targets:
 - `minikv_server`
 - `minikv_cmd_test`
 - `minikv_command_registry_test`
+- `minikv_module_exports_test`
 - `minikv_hash_module_test`
+- `minikv_hash_bridge_test`
+- `minikv_hash_observer_test`
 - `minikv_module_manager_test`
 - `minikv_network_test`
 - `minikv_reply_encode_test`
@@ -107,18 +110,18 @@ Representative commands:
 
 ```bash
 docker exec <container> sh -lc '
-  cd /workspace/projects/OpenSource/cancer_redis/minikv &&
+  cd /workspace/projects/OpenSource/minikv &&
   cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug \
     -DMINIKV_USE_BUNDLED_ROCKSDB=ON
 '
 
 docker exec <container> sh -lc '
-  cd /workspace/projects/OpenSource/cancer_redis/minikv &&
+  cd /workspace/projects/OpenSource/minikv &&
   cmake --build build --parallel 8
 '
 
 docker exec <container> sh -lc '
-  cd /workspace/projects/OpenSource/cancer_redis/minikv &&
+  cd /workspace/projects/OpenSource/minikv &&
   ctest --test-dir build --output-on-failure
 '
 ```
@@ -128,7 +131,7 @@ container, you can refresh the committed bundle when its source commit changes:
 
 ```bash
 docker exec <container> sh -lc '
-  cd /workspace/projects/OpenSource/cancer_redis/minikv &&
+  cd /workspace/projects/OpenSource/minikv &&
   ./tools/build_linux.sh \
     --rocksdb-source-dir /path/to/rocksdb \
     --rocksdb-reuse-build-dir /path/to/rocksdb/build-minikv
@@ -155,7 +158,7 @@ Defaults are defined in `src/config.h`.
 
 The standalone validation standard is:
 
-- all 8 test targets build successfully
+- all 11 test targets build successfully
 - `ctest --test-dir build --output-on-failure` works from the standalone build
   root
 - the committed RocksDB bundle can be used without re-fetching or recompiling
@@ -164,5 +167,5 @@ The standalone validation standard is:
   `tools/baseline_smoke.py`
 
 `tools/build_linux.sh` also remains a supported developer entrypoint. It runs
-the eight test binaries directly after building, which is useful when you want
+the eleven test binaries directly after building, which is useful when you want
 a single command that both builds and validates the project.

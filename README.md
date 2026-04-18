@@ -4,7 +4,7 @@
 on a narrow hash-only command surface, exposes a network-only runtime, and now
 loads its command surface from builtin modules only. There is currently no
 external module ABI. The project is maintained here as a standalone project
-under `cancer_redis/minikv`.
+under `minikv/`.
 
 ## Quick Start
 

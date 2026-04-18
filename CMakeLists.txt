@@ -50,7 +50,6 @@ set(MINIKV_INTERNAL_HEADERS
   src/common/thread_name.h
   src/codec/key_codec.h
   src/kernel/command_registry.h
-  src/kernel/mutation_hook.h
   src/kernel/reply.h
   src/kernel/reply_node.h
   src/kernel/scheduler.h
@@ -61,7 +60,9 @@ set(MINIKV_INTERNAL_HEADERS
   src/module/module_manager.h
   src/module/module_services.h
   src/modules/core/core_module.h
+  src/modules/hash/hash_indexing_bridge.h
   src/modules/hash/hash_module.h
+  src/modules/hash/hash_observer.h
   src/modules/hash/hash_types.h
   src/network/resp_parser.h
   src/worker/key_lock_table.h
@@ -135,4 +136,10 @@ if(BUILD_TESTING)
   minikv_add_test(minikv_snapshot_test tests/kernel_test/snapshot_test.cc)
   minikv_add_test(minikv_module_manager_test
     tests/module_test/module_manager_test.cc)
+  minikv_add_test(minikv_module_exports_test
+    tests/module_test/module_exports_test.cc)
+  minikv_add_test(minikv_hash_bridge_test
+    tests/module_test/hash_bridge_test.cc)
+  minikv_add_test(minikv_hash_observer_test
+    tests/type_test/hash_observer_test.cc)
 endif()

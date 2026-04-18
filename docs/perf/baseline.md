@@ -6,13 +6,13 @@ used after splitting the project out of the RocksDB repository tree.
 ## Authoritative Environment
 
 The default acceptance environment for this workspace is the Linux Docker
-container with `cancer_redis` mounted at:
+container with the current workspace mounted at:
 
-- `/workspace/projects/OpenSource/cancer_redis`
+- `/workspace/projects/OpenSource`
 
 The authoritative project root inside that container is:
 
-- `/workspace/projects/OpenSource/cancer_redis/minikv`
+- `/workspace/projects/OpenSource/minikv`
 
 ## Build And Test Baseline
 
@@ -20,7 +20,7 @@ Recommended standalone build:
 
 ```bash
 docker exec <container> sh -lc '
-  cd /workspace/projects/OpenSource/cancer_redis/minikv &&
+  cd /workspace/projects/OpenSource/minikv &&
   ./tools/build_linux.sh
 '
 ```
@@ -30,7 +30,7 @@ pinned tag:
 
 ```bash
 docker exec <container> sh -lc '
-  cd /workspace/projects/OpenSource/cancer_redis/minikv &&
+  cd /workspace/projects/OpenSource/minikv &&
   ./tools/build_linux.sh \
     --rocksdb-source-dir /path/to/rocksdb
 '
@@ -40,7 +40,10 @@ The baseline test matrix is:
 
 - `minikv_cmd_test`
 - `minikv_command_registry_test`
+- `minikv_module_exports_test`
 - `minikv_hash_module_test`
+- `minikv_hash_bridge_test`
+- `minikv_hash_observer_test`
 - `minikv_module_manager_test`
 - `minikv_network_test`
 - `minikv_reply_encode_test`
@@ -51,7 +54,7 @@ All of these are expected to run through:
 
 ```bash
 docker exec <container> sh -lc '
-  cd /workspace/projects/OpenSource/cancer_redis/minikv &&
+  cd /workspace/projects/OpenSource/minikv &&
   ctest --test-dir build --output-on-failure
 '
 ```
@@ -62,7 +65,7 @@ Start the server:
 
 ```bash
 docker exec <container> sh -lc '
-  cd /workspace/projects/OpenSource/cancer_redis/minikv &&
+  cd /workspace/projects/OpenSource/minikv &&
   rm -rf /tmp/minikv-baseline-db &&
   ./build/minikv_server \
     --db_path /tmp/minikv-baseline-db \
@@ -77,7 +80,7 @@ Run the smoke check:
 
 ```bash
 docker exec <container> sh -lc '
-  cd /workspace/projects/OpenSource/cancer_redis/minikv &&
+  cd /workspace/projects/OpenSource/minikv &&
   python3 tools/baseline_smoke.py --host 127.0.0.1 --port 6390 --iterations 20
 '
 ```

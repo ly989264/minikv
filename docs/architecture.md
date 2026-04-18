@@ -22,7 +22,7 @@ Related documents:
 
 The current implementation is organized as:
 
-`main -> NetworkServer -> RESP parser / runtime CommandRegistry -> Scheduler -> Worker -> builtin module command -> HashModule -> ModuleSnapshot / ModuleWriteBatch -> StorageEngine -> RocksDB`
+`main -> NetworkServer -> RESP parser / runtime CommandRegistry -> Scheduler -> Worker -> builtin module command -> HashModule -> HashIndexingBridge / HashObserver -> ModuleSnapshot / ModuleWriteBatch -> StorageEngine -> RocksDB`
 
 The responsibilities are:
 
@@ -32,12 +32,14 @@ The responsibilities are:
 - `src/network/network_server.h` and `src/network/`: TCP accept loop,
   per-I/O-thread connection management, RESP parsing, response encoding, and
   response reordering
-- `src/module/`: builtin module SPI, lifecycle, and module service facades
+- `src/module/`: builtin module SPI, lifecycle, shared export registry, and
+  module service facades
 - `src/command/`: converts parsed RESP parts into registered `Cmd` objects
 - `src/kernel/`: scheduler, storage engine, snapshot, write context, command
-  registry, reply helpers, and mutation hook interfaces
+  registry, and reply helpers
 - `src/modules/core/`: protocol-level builtin commands such as `PING`
-- `src/modules/hash/`: hash builtin module and its command registrations
+- `src/modules/hash/`: hash builtin module, exported indexing bridge, observer
+  interface, and command registrations
 - `src/codec/`: key and metadata encoding rules
 - `src/worker/`: worker queue and same-key serialized command execution
 
@@ -47,6 +49,8 @@ Public behavior is intentionally narrow today:
 - supported data type: hash only
 - supported deployment shape: single process, POSIX server path
 - supported module shape: builtin modules only, with no external ABI
+- search wiring is still limited to prep infrastructure only; there is no
+  builtin `SearchModule` and no `FT.*` command family
 
 ## Request Lifecycle
 
@@ -66,14 +70,16 @@ semantics:
 6. The worker thread acquires the striped key lock for `cmd->RouteKey()` and
    executes `Cmd::Execute()`.
 7. Hash commands use `HashModule`, which reads through `ModuleSnapshot` and
-   writes through `ModuleWriteBatch`.
-8. `StorageEngine` translates those primitive operations onto RocksDB column
-   families and write batches.
-9. The completion callback pushes the `CommandResponse` back into the owning
+   stages writes through `ModuleWriteBatch`.
+8. Before commit, `HashModule` synchronously notifies any registered
+   `HashObserver` instances through the exported `HashIndexingBridge`.
+9. `StorageEngine` translates the committed write batch onto RocksDB column
+   families.
+10. The completion callback pushes the `CommandResponse` back into the owning
    I/O thread's completed queue.
-10. The I/O thread reorders completions by request sequence, encodes the
+11. The I/O thread reorders completions by request sequence, encodes the
     response as RESP, and appends it to the connection's write buffer.
-11. The I/O thread flushes buffered responses back to the client socket.
+12. The I/O thread flushes buffered responses back to the client socket.
 
 ## Storage Model
 
@@ -135,8 +141,21 @@ source-compiled modules loaded by `ModuleManager`.
 Impact:
 
 - command registration is now unified under one runtime registry
+- typed module exports now support narrow cross-module collaboration without
+  leaking private module pointers
 - there is still no external ABI, dynamic loading path, or third-party module
   contract
+
+### P2: Search Prep Exists But Search Is Still Not Wired In
+
+The current code now exposes a hash-only indexing bridge plus synchronous hash
+observer callbacks, but the actual search feature surface is still absent.
+
+Impact:
+
+- hash writes can now carry observer-side index updates in the same write batch
+- there is still no `SearchModule`
+- there are still no `FT.CREATE`, `FT.SEARCH`, or other `FT.*` commands
 
 ### P2: Metadata Schema Still Signals Future Features That Are Not Active
 

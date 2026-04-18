@@ -9,7 +9,7 @@
 
 namespace minikv {
 
-class WriteContext;
+class ModuleWriteBatch;
 
 struct HashMutation {
   enum class Type {
@@ -27,20 +27,12 @@ struct HashMutation {
   bool exists_after = false;
 };
 
-class MutationHook {
+class HashObserver {
  public:
-  virtual ~MutationHook() = default;
+  virtual ~HashObserver() = default;
 
   virtual rocksdb::Status OnHashMutation(const HashMutation& mutation,
-                                         WriteContext* write_context) = 0;
-};
-
-class NoopMutationHook : public MutationHook {
- public:
-  rocksdb::Status OnHashMutation(const HashMutation&,
-                                 WriteContext*) override {
-    return rocksdb::Status::OK();
-  }
+                                         ModuleWriteBatch* write_batch) = 0;
 };
 
 }  // namespace minikv

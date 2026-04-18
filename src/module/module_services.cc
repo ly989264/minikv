@@ -116,6 +116,105 @@ rocksdb::Status ModuleCommandRegistry::Register(CmdRegistration registration) {
   return registry_->Register(std::move(registration));
 }
 
+class ModuleExportRegistry::SharedState {
+ public:
+  struct Entry {
+    std::string owner_module;
+    std::type_index export_type = std::type_index(typeid(void));
+    void* value = nullptr;
+  };
+
+  rocksdb::Status Publish(const std::string& qualified_name,
+                          const std::string& owner_module,
+                          std::type_index export_type, void* value) {
+    auto [it, inserted] =
+        entries_.emplace(qualified_name,
+                         Entry{owner_module, export_type, value});
+    if (!inserted) {
+      std::string message = "module export already published: " + qualified_name;
+      if (!it->second.owner_module.empty()) {
+        message += " existing module=" + it->second.owner_module;
+      }
+      if (!owner_module.empty()) {
+        message += " new module=" + owner_module;
+      }
+      return rocksdb::Status::InvalidArgument(message);
+    }
+    return rocksdb::Status::OK();
+  }
+
+  void* Find(const std::string& qualified_name,
+             std::type_index export_type) const {
+    auto it = entries_.find(qualified_name);
+    if (it == entries_.end() || it->second.export_type != export_type) {
+      return nullptr;
+    }
+    return it->second.value;
+  }
+
+  void ClearOwnedExports(const std::string& owner_module) {
+    for (auto it = entries_.begin(); it != entries_.end();) {
+      if (it->second.owner_module == owner_module) {
+        it = entries_.erase(it);
+      } else {
+        ++it;
+      }
+    }
+  }
+
+ private:
+  std::map<std::string, Entry> entries_;
+};
+
+std::shared_ptr<ModuleExportRegistry::SharedState>
+ModuleExportRegistry::CreateSharedState() {
+  return std::make_shared<SharedState>();
+}
+
+ModuleExportRegistry::ModuleExportRegistry(
+    std::shared_ptr<SharedState> shared_state, ModuleNamespace module_namespace,
+    const bool* publish_open)
+    : shared_state_(std::move(shared_state)),
+      module_namespace_(std::move(module_namespace)),
+      publish_open_(publish_open) {}
+
+rocksdb::Status ModuleExportRegistry::PublishType(const std::string& local_name,
+                                                  std::type_index export_type,
+                                                  void* value) {
+  if (shared_state_ == nullptr) {
+    return rocksdb::Status::InvalidArgument(
+        "module export registry is unavailable");
+  }
+  if (local_name.empty()) {
+    return rocksdb::Status::InvalidArgument("module export name is required");
+  }
+  if (value == nullptr) {
+    return rocksdb::Status::InvalidArgument("module export value is required");
+  }
+  if (publish_open_ == nullptr || !*publish_open_) {
+    return rocksdb::Status::InvalidArgument(
+        "module exports may only publish during startup");
+  }
+  return shared_state_->Publish(module_namespace_.Qualify(local_name),
+                                module_namespace_.module_name(), export_type,
+                                value);
+}
+
+void* ModuleExportRegistry::FindType(const std::string& qualified_name,
+                                     std::type_index export_type) const {
+  if (shared_state_ == nullptr || qualified_name.empty()) {
+    return nullptr;
+  }
+  return shared_state_->Find(qualified_name, export_type);
+}
+
+void ModuleExportRegistry::ClearOwnedExports() {
+  if (shared_state_ == nullptr) {
+    return;
+  }
+  shared_state_->ClearOwnedExports(module_namespace_.module_name());
+}
+
 ModuleStorage::ModuleStorage(StorageEngine* storage_engine)
     : storage_engine_(storage_engine) {}
 
@@ -190,12 +289,14 @@ uint64_t ModuleMetrics::GetCounter(const std::string& local_name) const {
 }
 
 ModuleServices::ModuleServices(ModuleCommandRegistry command_registry,
+                               ModuleExportRegistry exports,
                                ModuleStorage storage,
                                ModuleSnapshotService snapshot,
                                ModuleSchedulerView scheduler,
                                ModuleNamespace name_space,
                                ModuleMetrics metrics)
     : command_registry_(std::move(command_registry)),
+      exports_(std::move(exports)),
       storage_(std::move(storage)),
       snapshot_(std::move(snapshot)),
       scheduler_(std::move(scheduler)),

@@ -24,12 +24,7 @@ std::vector<std::unique_ptr<Module>> CreateBuiltinModules() {
 
 class MiniKV::Impl {
  public:
-  explicit Impl(const Config& config_value)
-      : config(config_value),
-        scheduler(config_value.worker_threads,
-                  config_value.max_pending_requests_per_worker),
-        module_manager(std::make_unique<ModuleManager>(
-            &storage_engine, &scheduler, CreateBuiltinModules())) {}
+  explicit Impl(const Config& config_value) : config(config_value) {}
 
   ~Impl() {
     if (module_manager != nullptr) {
@@ -39,7 +34,7 @@ class MiniKV::Impl {
 
   Config config;
   StorageEngine storage_engine;
-  Scheduler scheduler;
+  std::unique_ptr<Scheduler> scheduler;
   std::unique_ptr<ModuleManager> module_manager;
 };
 
@@ -54,6 +49,10 @@ rocksdb::Status MiniKV::Open(const Config& config,
   if (!status.ok()) {
     return status;
   }
+  impl->scheduler = std::make_unique<Scheduler>(
+      config.worker_threads, config.max_pending_requests_per_worker);
+  impl->module_manager = std::make_unique<ModuleManager>(
+      &impl->storage_engine, impl->scheduler.get(), CreateBuiltinModules());
   status = impl->module_manager->Initialize();
   if (!status.ok()) {
     return status;
@@ -62,7 +61,7 @@ rocksdb::Status MiniKV::Open(const Config& config,
   return rocksdb::Status::OK();
 }
 
-Scheduler* MiniKV::scheduler() { return &impl_->scheduler; }
+Scheduler* MiniKV::scheduler() { return impl_->scheduler.get(); }
 
 const CommandRegistry& MiniKV::command_registry() const {
   return impl_->module_manager->command_registry();

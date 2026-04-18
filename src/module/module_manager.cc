@@ -8,15 +8,22 @@ namespace {
 
 ModuleServices MakeServices(StorageEngine* storage_engine, Scheduler* scheduler,
                             CommandRegistry* registry,
+                            std::shared_ptr<ModuleExportRegistry::SharedState>
+                                export_store,
                             std::shared_ptr<ModuleMetricsStore> metrics_store,
                             std::string module_name,
-                            const bool* registration_open) {
+                            const bool* registration_open,
+                            const bool* export_publish_open) {
   ModuleNamespace command_namespace(module_name);
+  ModuleNamespace export_namespace(module_name);
   ModuleNamespace services_namespace(module_name);
   ModuleNamespace metrics_namespace(std::move(module_name));
   return ModuleServices(ModuleCommandRegistry(registry,
                                              std::move(command_namespace),
                                              registration_open),
+                        ModuleExportRegistry(std::move(export_store),
+                                             std::move(export_namespace),
+                                             export_publish_open),
                         ModuleStorage(storage_engine),
                         ModuleSnapshotService(storage_engine),
                         ModuleSchedulerView(scheduler),
@@ -29,15 +36,18 @@ ModuleServices MakeServices(StorageEngine* storage_engine, Scheduler* scheduler,
 
 ModuleManager::ModuleManager(StorageEngine* storage_engine, Scheduler* scheduler,
                              std::vector<std::unique_ptr<Module>> modules)
-    : metrics_store_(std::make_shared<ModuleMetricsStore>()) {
+    : metrics_store_(std::make_shared<ModuleMetricsStore>()),
+      export_store_(ModuleExportRegistry::CreateSharedState()) {
   modules_.reserve(modules.size());
   for (auto& module : modules) {
     const std::string module_name =
         module != nullptr ? std::string(module->Name()) : std::string();
     modules_.emplace_back(std::move(module),
                           MakeServices(storage_engine, scheduler,
-                                       &command_registry_, metrics_store_,
-                                       module_name, &registration_open_));
+                                       &command_registry_, export_store_,
+                                       metrics_store_, module_name,
+                                       &registration_open_,
+                                       &export_publish_open_));
   }
 }
 
@@ -50,9 +60,12 @@ rocksdb::Status ModuleManager::Initialize() {
 
   for (auto& slot : modules_) {
     registration_open_ = true;
+    export_publish_open_ = true;
     rocksdb::Status status = slot.module->OnLoad(slot.services);
     registration_open_ = false;
+    export_publish_open_ = false;
     if (!status.ok()) {
+      slot.services.exports().ClearOwnedExports();
       StopLoadedModules();
       return status;
     }
@@ -60,7 +73,9 @@ rocksdb::Status ModuleManager::Initialize() {
   }
 
   for (auto& slot : modules_) {
+    export_publish_open_ = true;
     rocksdb::Status status = slot.module->OnStart(slot.services);
+    export_publish_open_ = false;
     if (!status.ok()) {
       StopLoadedModules();
       return status;
@@ -83,11 +98,13 @@ void ModuleManager::StopAll() {
 
 void ModuleManager::StopLoadedModules() {
   registration_open_ = false;
+  export_publish_open_ = false;
   for (auto it = modules_.rbegin(); it != modules_.rend(); ++it) {
     if (!it->loaded) {
       continue;
     }
     it->module->OnStop(it->services);
+    it->services.exports().ClearOwnedExports();
     it->started = false;
     it->loaded = false;
   }

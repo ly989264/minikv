@@ -19,12 +19,13 @@ and must be idempotent.
 
 Startup order is fixed:
 
-1. `MiniKV::Open()` opens `StorageEngine`
-2. `MiniKV` constructs `Scheduler`
-3. `MiniKV` constructs `ModuleManager`
-4. `ModuleManager` calls `OnLoad()` for every builtin module in order
-5. `ModuleManager` calls `OnStart()` for every builtin module in order
-6. only after all hooks succeed does `MiniKV::Open()` publish the runtime
+1. `MiniKV::Open()` creates the runtime owner
+2. `MiniKV::Open()` opens `StorageEngine`
+3. `MiniKV` constructs `Scheduler`
+4. `MiniKV` constructs `ModuleManager`
+5. `ModuleManager` calls `OnLoad()` for every builtin module in order
+6. `ModuleManager` calls `OnStart()` for every builtin module in order
+7. only after all hooks succeed does `MiniKV::Open()` publish the runtime
 
 Shutdown order is the reverse:
 
@@ -45,11 +46,18 @@ Command registration is only allowed during `OnLoad()`.
 This keeps command names stable before the server starts accepting requests and
 makes conflicts fail during `MiniKV::Open()`.
 
+Module exports use a slightly wider startup window:
+
+- `ModuleExportRegistry::Publish()` is allowed during `OnLoad()` and `OnStart()`
+- the current hash bridge publishes during `HashModule::OnLoad()`
+- consumer modules should resolve and bind exports during `OnStart()`
+
 ## Failure Rollback
 
 If any `OnLoad()` fails:
 
 - `MiniKV::Open()` fails
+- exports published by the failing module are cleared immediately
 - previously loaded modules receive `OnStop()` in reverse order
 - the runtime is not published
 
@@ -58,6 +66,7 @@ If any `OnStart()` fails:
 - `MiniKV::Open()` fails
 - all loaded modules, including the one whose `OnStart()` failed, receive
   `OnStop()` in reverse order
+- each module's published exports are cleared after its `OnStop()`
 - the runtime is not published
 
 ## Current Scope

@@ -17,7 +17,7 @@ This directory is a standalone project rooted at `minikv/`.
 
 - `ctest --test-dir <build-dir> --output-on-failure` is the authoritative CMake
   test entrypoint.
-- `./tools/build_linux.sh` intentionally runs the six test binaries directly
+- `./tools/build_linux.sh` intentionally runs the eleven test binaries directly
   after building. Keep that path working because it is the most robust
   end-to-end developer workflow.
 - If a test becomes flaky, fix the test or its synchronization rather than

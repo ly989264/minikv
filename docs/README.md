@@ -1,7 +1,7 @@
 # MiniKV Docs
 
 This directory stores implementation-facing documentation for the standalone
-`minikv/` project under `cancer_redis`.
+`minikv/` project in this workspace.
 
 Current documents:
 

@@ -41,8 +41,10 @@ class ModuleManager {
 
   CommandRegistry command_registry_;
   std::shared_ptr<ModuleMetricsStore> metrics_store_;
+  std::shared_ptr<ModuleExportRegistry::SharedState> export_store_;
   std::vector<ModuleSlot> modules_;
   bool registration_open_ = false;
+  bool export_publish_open_ = false;
   bool initialized_ = false;
 };
 

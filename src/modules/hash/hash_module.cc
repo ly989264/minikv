@@ -1,11 +1,13 @@
 #include "modules/hash/hash_module.h"
 
+#include <algorithm>
 #include <memory>
 #include <utility>
 
 #include "codec/key_codec.h"
 #include "command/cmd.h"
 #include "module/module_services.h"
+#include "modules/hash/hash_observer.h"
 
 namespace minikv {
 
@@ -145,9 +147,17 @@ class HDelCmd : public Cmd {
 }  // namespace
 
 rocksdb::Status HashModule::OnLoad(ModuleServices& services) {
+  observers_.clear();
   services_ = &services;
 
-  rocksdb::Status status = services.command_registry().Register(
+  rocksdb::Status status = services.exports().Publish<HashIndexingBridge>(
+      kHashIndexingBridgeExportName,
+      static_cast<HashIndexingBridge*>(this));
+  if (!status.ok()) {
+    return status;
+  }
+
+  status = services.command_registry().Register(
       {"HSET", CmdFlags::kWrite | CmdFlags::kFast, CommandSource::kBuiltin, "",
        [this](const CmdRegistration& registration) {
          return std::make_unique<HSetCmd>(registration, this);
@@ -188,8 +198,39 @@ rocksdb::Status HashModule::OnStart(ModuleServices& services) {
 }
 
 void HashModule::OnStop(ModuleServices& /*services*/) {
+  observers_.clear();
   started_ = false;
   services_ = nullptr;
+}
+
+rocksdb::Status HashModule::AddObserver(HashObserver* observer) {
+  if (services_ == nullptr) {
+    return rocksdb::Status::InvalidArgument("hash indexing bridge is unavailable");
+  }
+  if (observer == nullptr) {
+    return rocksdb::Status::InvalidArgument("hash observer is required");
+  }
+  if (std::find(observers_.begin(), observers_.end(), observer) !=
+      observers_.end()) {
+    return rocksdb::Status::InvalidArgument("hash observer already registered");
+  }
+  observers_.push_back(observer);
+  return rocksdb::Status::OK();
+}
+
+rocksdb::Status HashModule::RemoveObserver(HashObserver* observer) {
+  if (services_ == nullptr) {
+    return rocksdb::Status::InvalidArgument("hash indexing bridge is unavailable");
+  }
+  if (observer == nullptr) {
+    return rocksdb::Status::InvalidArgument("hash observer is required");
+  }
+  auto it = std::find(observers_.begin(), observers_.end(), observer);
+  if (it == observers_.end()) {
+    return rocksdb::Status::InvalidArgument("hash observer is not registered");
+  }
+  observers_.erase(it);
+  return rocksdb::Status::OK();
 }
 
 rocksdb::Status HashModule::PutField(const std::string& key,
@@ -255,6 +296,19 @@ rocksdb::Status HashModule::PutField(const std::string& key,
     return status;
   }
   status = write_batch->Put(StorageColumnFamily::kHash, data_key, value);
+  if (!status.ok()) {
+    return status;
+  }
+
+  HashMutation mutation;
+  mutation.type = HashMutation::Type::kPutField;
+  mutation.key = key;
+  mutation.values.push_back(FieldValue{field, value});
+  mutation.before = before;
+  mutation.after = after;
+  mutation.existed_before = existed_before;
+  mutation.exists_after = true;
+  status = NotifyObservers(mutation, write_batch.get());
   if (!status.ok()) {
     return status;
   }
@@ -340,6 +394,7 @@ rocksdb::Status HashModule::DeleteFields(const std::string& key,
   uint64_t removed = 0;
   std::unique_ptr<ModuleWriteBatch> write_batch =
       services_->storage().CreateWriteBatch();
+  std::vector<std::string> removed_fields;
   std::string scratch;
   for (const auto& field : fields) {
     const std::string data_key =
@@ -351,6 +406,7 @@ rocksdb::Status HashModule::DeleteFields(const std::string& key,
         return status;
       }
       ++removed;
+      removed_fields.push_back(field);
     } else if (!status.IsNotFound()) {
       return status;
     }
@@ -376,6 +432,19 @@ rocksdb::Status HashModule::DeleteFields(const std::string& key,
     return status;
   }
 
+  HashMutation mutation;
+  mutation.type = HashMutation::Type::kDeleteFields;
+  mutation.key = key;
+  mutation.deleted_fields = removed_fields;
+  mutation.before = before;
+  mutation.after = after;
+  mutation.existed_before = true;
+  mutation.exists_after = removed < before.size;
+  status = NotifyObservers(mutation, write_batch.get());
+  if (!status.ok()) {
+    return status;
+  }
+
   status = write_batch->Commit();
   if (deleted != nullptr) {
     *deleted = status.ok() ? removed : 0;
@@ -386,6 +455,20 @@ rocksdb::Status HashModule::DeleteFields(const std::string& key,
 rocksdb::Status HashModule::EnsureReady() const {
   if (services_ == nullptr || !started_) {
     return rocksdb::Status::InvalidArgument("hash module is unavailable");
+  }
+  return rocksdb::Status::OK();
+}
+
+rocksdb::Status HashModule::NotifyObservers(const HashMutation& mutation,
+                                            ModuleWriteBatch* write_batch) const {
+  if (write_batch == nullptr) {
+    return rocksdb::Status::InvalidArgument("module write batch is unavailable");
+  }
+  for (HashObserver* observer : observers_) {
+    rocksdb::Status status = observer->OnHashMutation(mutation, write_batch);
+    if (!status.ok()) {
+      return status;
+    }
   }
   return rocksdb::Status::OK();
 }

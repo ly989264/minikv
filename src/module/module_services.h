@@ -6,6 +6,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <typeindex>
 
 #include "kernel/command_registry.h"
 #include "kernel/storage_engine.h"
@@ -95,6 +96,40 @@ class ModuleCommandRegistry {
   const bool* registration_open_ = nullptr;
 };
 
+class ModuleExportRegistry {
+ public:
+  class SharedState;
+
+  static std::shared_ptr<SharedState> CreateSharedState();
+
+  ModuleExportRegistry(std::shared_ptr<SharedState> shared_state,
+                       ModuleNamespace module_namespace,
+                       const bool* publish_open);
+
+  template <typename T>
+  rocksdb::Status Publish(const std::string& local_name, T* value) {
+    return PublishType(local_name, std::type_index(typeid(T)), value);
+  }
+
+  template <typename T>
+  T* Find(const std::string& qualified_name) const {
+    return static_cast<T*>(
+        FindType(qualified_name, std::type_index(typeid(T))));
+  }
+
+  void ClearOwnedExports();
+
+ private:
+  rocksdb::Status PublishType(const std::string& local_name,
+                              std::type_index export_type, void* value);
+  void* FindType(const std::string& qualified_name,
+                 std::type_index export_type) const;
+
+  std::shared_ptr<SharedState> shared_state_;
+  ModuleNamespace module_namespace_;
+  const bool* publish_open_ = nullptr;
+};
+
 class ModuleStorage {
  public:
   explicit ModuleStorage(StorageEngine* storage_engine);
@@ -147,14 +182,19 @@ class ModuleMetrics {
 
 class ModuleServices {
  public:
-  ModuleServices(ModuleCommandRegistry command_registry, ModuleStorage storage,
-                 ModuleSnapshotService snapshot, ModuleSchedulerView scheduler,
-                 ModuleNamespace name_space, ModuleMetrics metrics);
+  ModuleServices(ModuleCommandRegistry command_registry,
+                 ModuleExportRegistry exports, ModuleStorage storage,
+                 ModuleSnapshotService snapshot,
+                 ModuleSchedulerView scheduler, ModuleNamespace name_space,
+                 ModuleMetrics metrics);
 
   ModuleCommandRegistry& command_registry() { return command_registry_; }
   const ModuleCommandRegistry& command_registry() const {
     return command_registry_;
   }
+
+  ModuleExportRegistry& exports() { return exports_; }
+  const ModuleExportRegistry& exports() const { return exports_; }
 
   ModuleStorage& storage() { return storage_; }
   const ModuleStorage& storage() const { return storage_; }
@@ -173,6 +213,7 @@ class ModuleServices {
 
  private:
   ModuleCommandRegistry command_registry_;
+  ModuleExportRegistry exports_;
   ModuleStorage storage_;
   ModuleSnapshotService snapshot_;
   ModuleSchedulerView scheduler_;
