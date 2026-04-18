@@ -153,6 +153,9 @@ if [[ "${SKIP_TESTS}" -eq 0 ]]; then
     minikv_cmd_test
     minikv_command_registry_test
     minikv_module_exports_test
+    minikv_module_keyspace_test
+    minikv_module_iterator_test
+    minikv_background_executor_test
     minikv_hash_module_test
     minikv_hash_bridge_test
     minikv_hash_observer_test

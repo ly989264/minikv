@@ -7,6 +7,7 @@ namespace minikv {
 namespace {
 
 ModuleServices MakeServices(StorageEngine* storage_engine, Scheduler* scheduler,
+                            BackgroundExecutor* background_executor,
                             CommandRegistry* registry,
                             std::shared_ptr<ModuleExportRegistry::SharedState>
                                 export_store,
@@ -16,16 +17,23 @@ ModuleServices MakeServices(StorageEngine* storage_engine, Scheduler* scheduler,
                             const bool* export_publish_open) {
   ModuleNamespace command_namespace(module_name);
   ModuleNamespace export_namespace(module_name);
+  ModuleNamespace storage_namespace(module_name);
+  ModuleNamespace snapshot_namespace(module_name);
+  ModuleNamespace background_namespace(module_name);
   ModuleNamespace services_namespace(module_name);
-  ModuleNamespace metrics_namespace(std::move(module_name));
+  ModuleNamespace metrics_namespace(module_name);
   return ModuleServices(ModuleCommandRegistry(registry,
                                              std::move(command_namespace),
                                              registration_open),
                         ModuleExportRegistry(std::move(export_store),
                                              std::move(export_namespace),
                                              export_publish_open),
-                        ModuleStorage(storage_engine),
-                        ModuleSnapshotService(storage_engine),
+                        ModuleStorage(std::move(storage_namespace),
+                                      storage_engine),
+                        ModuleSnapshotService(std::move(snapshot_namespace),
+                                              storage_engine),
+                        ModuleBackgroundService(background_executor,
+                                                std::move(background_namespace)),
                         ModuleSchedulerView(scheduler),
                         std::move(services_namespace),
                         ModuleMetrics(std::move(metrics_namespace),
@@ -36,7 +44,8 @@ ModuleServices MakeServices(StorageEngine* storage_engine, Scheduler* scheduler,
 
 ModuleManager::ModuleManager(StorageEngine* storage_engine, Scheduler* scheduler,
                              std::vector<std::unique_ptr<Module>> modules)
-    : metrics_store_(std::make_shared<ModuleMetricsStore>()),
+    : background_executor_("module-bg"),
+      metrics_store_(std::make_shared<ModuleMetricsStore>()),
       export_store_(ModuleExportRegistry::CreateSharedState()) {
   modules_.reserve(modules.size());
   for (auto& module : modules) {
@@ -44,6 +53,7 @@ ModuleManager::ModuleManager(StorageEngine* storage_engine, Scheduler* scheduler
         module != nullptr ? std::string(module->Name()) : std::string();
     modules_.emplace_back(std::move(module),
                           MakeServices(storage_engine, scheduler,
+                                       &background_executor_,
                                        &command_registry_, export_store_,
                                        metrics_store_, module_name,
                                        &registration_open_,
@@ -56,6 +66,11 @@ ModuleManager::~ModuleManager() { StopAll(); }
 rocksdb::Status ModuleManager::Initialize() {
   if (initialized_) {
     return rocksdb::Status::InvalidArgument("modules already initialized");
+  }
+
+  rocksdb::Status background_status = background_executor_.Start();
+  if (!background_status.ok()) {
+    return background_status;
   }
 
   for (auto& slot : modules_) {
@@ -99,6 +114,7 @@ void ModuleManager::StopAll() {
 void ModuleManager::StopLoadedModules() {
   registration_open_ = false;
   export_publish_open_ = false;
+  background_executor_.Stop();
   for (auto it = modules_.rbegin(); it != modules_.rend(); ++it) {
     if (!it->loaded) {
       continue;

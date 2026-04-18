@@ -21,6 +21,8 @@ class Snapshot {
 
   rocksdb::Status Get(StorageColumnFamily column_family,
                       const rocksdb::Slice& key, std::string* value) const;
+  std::unique_ptr<rocksdb::Iterator> NewIterator(
+      StorageColumnFamily column_family) const;
   rocksdb::Status ScanPrefix(StorageColumnFamily column_family,
                              const rocksdb::Slice& prefix,
                              const ScanVisitor& visitor) const;

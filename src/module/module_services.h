@@ -16,6 +16,7 @@
 
 namespace minikv {
 
+class BackgroundExecutor;
 class Scheduler;
 
 class ModuleNamespace {
@@ -27,6 +28,25 @@ class ModuleNamespace {
 
  private:
   std::string module_name_;
+};
+
+class ModuleKeyspace {
+ public:
+  ModuleKeyspace();
+  ModuleKeyspace(std::string module_name, std::string local_name);
+
+  const std::string& module_name() const { return module_name_; }
+  const std::string& local_name() const { return local_name_; }
+  bool valid() const;
+  std::string QualifiedName() const;
+  const std::string& Prefix() const { return encoded_prefix_; }
+  std::string EncodeKey(const rocksdb::Slice& key) const;
+  bool DecodeKey(const rocksdb::Slice& storage_key, std::string* key) const;
+
+ private:
+  std::string module_name_;
+  std::string local_name_;
+  std::string encoded_prefix_;
 };
 
 class ModuleWriteBatch {
@@ -41,7 +61,11 @@ class ModuleWriteBatch {
   rocksdb::Status Put(StorageColumnFamily column_family,
                       const rocksdb::Slice& key,
                       const rocksdb::Slice& value);
+  rocksdb::Status Put(const ModuleKeyspace& keyspace, const rocksdb::Slice& key,
+                      const rocksdb::Slice& value);
   rocksdb::Status Delete(StorageColumnFamily column_family,
+                         const rocksdb::Slice& key);
+  rocksdb::Status Delete(const ModuleKeyspace& keyspace,
                          const rocksdb::Slice& key);
   rocksdb::Status Commit();
 
@@ -53,6 +77,33 @@ class ModuleWriteBatch {
   std::unique_ptr<Impl> impl_;
 
   friend class ModuleStorage;
+};
+
+class ModuleIterator {
+ public:
+  ~ModuleIterator();
+  ModuleIterator(ModuleIterator&&) noexcept;
+  ModuleIterator& operator=(ModuleIterator&&) noexcept;
+
+  ModuleIterator(const ModuleIterator&) = delete;
+  ModuleIterator& operator=(const ModuleIterator&) = delete;
+
+  void Seek(const rocksdb::Slice& key);
+  void Next();
+  bool Valid() const;
+  rocksdb::Slice key() const;
+  rocksdb::Slice value() const;
+  rocksdb::Status status() const;
+
+ private:
+  class Impl;
+
+  explicit ModuleIterator(std::unique_ptr<Impl> impl);
+  void Refresh();
+
+  std::unique_ptr<Impl> impl_;
+
+  friend class ModuleSnapshot;
 };
 
 class ModuleSnapshot {
@@ -69,9 +120,16 @@ class ModuleSnapshot {
 
   rocksdb::Status Get(StorageColumnFamily column_family,
                       const rocksdb::Slice& key, std::string* value) const;
+  rocksdb::Status Get(const ModuleKeyspace& keyspace, const rocksdb::Slice& key,
+                      std::string* value) const;
   rocksdb::Status ScanPrefix(StorageColumnFamily column_family,
                              const rocksdb::Slice& prefix,
                              const ScanVisitor& visitor) const;
+  rocksdb::Status ScanPrefix(const ModuleKeyspace& keyspace,
+                             const rocksdb::Slice& prefix,
+                             const ScanVisitor& visitor) const;
+  std::unique_ptr<ModuleIterator> NewIterator(
+      const ModuleKeyspace& keyspace) const;
 
  private:
   class Impl;
@@ -132,22 +190,43 @@ class ModuleExportRegistry {
 
 class ModuleStorage {
  public:
-  explicit ModuleStorage(StorageEngine* storage_engine);
+  ModuleStorage(ModuleNamespace module_namespace, StorageEngine* storage_engine);
+
+  ModuleKeyspace Keyspace(const std::string& local_name) const;
 
   std::unique_ptr<ModuleWriteBatch> CreateWriteBatch() const;
 
  private:
+  ModuleNamespace module_namespace_;
   StorageEngine* storage_engine_ = nullptr;
 };
 
 class ModuleSnapshotService {
  public:
-  explicit ModuleSnapshotService(const StorageEngine* storage_engine);
+  ModuleSnapshotService(ModuleNamespace module_namespace,
+                        const StorageEngine* storage_engine);
+
+  ModuleKeyspace Keyspace(const std::string& local_name) const;
 
   std::unique_ptr<ModuleSnapshot> Create() const;
 
  private:
+  ModuleNamespace module_namespace_;
   const StorageEngine* storage_engine_ = nullptr;
+};
+
+class ModuleBackgroundService {
+ public:
+  using Task = std::function<void()>;
+
+  ModuleBackgroundService(BackgroundExecutor* executor,
+                          ModuleNamespace module_namespace);
+
+  rocksdb::Status Submit(Task task) const;
+
+ private:
+  BackgroundExecutor* executor_ = nullptr;
+  ModuleNamespace module_namespace_;
 };
 
 class ModuleSchedulerView {
@@ -185,6 +264,7 @@ class ModuleServices {
   ModuleServices(ModuleCommandRegistry command_registry,
                  ModuleExportRegistry exports, ModuleStorage storage,
                  ModuleSnapshotService snapshot,
+                 ModuleBackgroundService background,
                  ModuleSchedulerView scheduler, ModuleNamespace name_space,
                  ModuleMetrics metrics);
 
@@ -202,6 +282,9 @@ class ModuleServices {
   ModuleSnapshotService& snapshot() { return snapshot_; }
   const ModuleSnapshotService& snapshot() const { return snapshot_; }
 
+  ModuleBackgroundService& background() { return background_; }
+  const ModuleBackgroundService& background() const { return background_; }
+
   ModuleSchedulerView& scheduler() { return scheduler_; }
   const ModuleSchedulerView& scheduler() const { return scheduler_; }
 
@@ -216,6 +299,7 @@ class ModuleServices {
   ModuleExportRegistry exports_;
   ModuleStorage storage_;
   ModuleSnapshotService snapshot_;
+  ModuleBackgroundService background_;
   ModuleSchedulerView scheduler_;
   ModuleNamespace name_space_;
   ModuleMetrics metrics_;

@@ -16,6 +16,9 @@ targets:
 - `minikv_cmd_test`
 - `minikv_command_registry_test`
 - `minikv_module_exports_test`
+- `minikv_module_keyspace_test`
+- `minikv_module_iterator_test`
+- `minikv_background_executor_test`
 - `minikv_hash_module_test`
 - `minikv_hash_bridge_test`
 - `minikv_hash_observer_test`
@@ -158,7 +161,7 @@ Defaults are defined in `src/config.h`.
 
 The standalone validation standard is:
 
-- all 11 test targets build successfully
+- all 14 test targets build successfully
 - `ctest --test-dir build --output-on-failure` works from the standalone build
   root
 - the committed RocksDB bundle can be used without re-fetching or recompiling
@@ -167,5 +170,6 @@ The standalone validation standard is:
   `tools/baseline_smoke.py`
 
 `tools/build_linux.sh` also remains a supported developer entrypoint. It runs
-the eleven test binaries directly after building, which is useful when you want
+a fixed list of 14 test binaries directly after building, which is useful when
+you want
 a single command that both builds and validates the project.

@@ -1,12 +1,47 @@
 #include "module/module_services.h"
 
+#include <cstdint>
+#include <cstring>
 #include <utility>
 
 #include "kernel/scheduler.h"
 #include "kernel/snapshot.h"
 #include "kernel/write_context.h"
+#include "module/background_executor.h"
+#include "rocksdb/iterator.h"
 
 namespace minikv {
+
+namespace {
+
+void AppendUint32(std::string* out, uint32_t value) {
+  out->push_back(static_cast<char>((value >> 24) & 0xff));
+  out->push_back(static_cast<char>((value >> 16) & 0xff));
+  out->push_back(static_cast<char>((value >> 8) & 0xff));
+  out->push_back(static_cast<char>(value & 0xff));
+}
+
+std::string EncodeModuleKeyspacePrefix(const std::string& module_name,
+                                       const std::string& local_name) {
+  std::string out;
+  out.reserve(8 + module_name.size() + local_name.size());
+  AppendUint32(&out, static_cast<uint32_t>(module_name.size()));
+  out.append(module_name);
+  AppendUint32(&out, static_cast<uint32_t>(local_name.size()));
+  out.append(local_name);
+  return out;
+}
+
+bool StartsWith(const rocksdb::Slice& value, const std::string& prefix) {
+  return value.size() >= prefix.size() &&
+         std::memcmp(value.data(), prefix.data(), prefix.size()) == 0;
+}
+
+rocksdb::Status InvalidKeyspaceStatus() {
+  return rocksdb::Status::InvalidArgument("module keyspace is required");
+}
+
+}  // namespace
 
 ModuleNamespace::ModuleNamespace(std::string module_name)
     : module_name_(std::move(module_name)) {}
@@ -16,6 +51,47 @@ std::string ModuleNamespace::Qualify(const std::string& local_name) const {
     return module_name_;
   }
   return module_name_ + "." + local_name;
+}
+
+ModuleKeyspace::ModuleKeyspace() = default;
+
+ModuleKeyspace::ModuleKeyspace(std::string module_name, std::string local_name)
+    : module_name_(std::move(module_name)), local_name_(std::move(local_name)) {
+  if (valid()) {
+    encoded_prefix_ = EncodeModuleKeyspacePrefix(module_name_, local_name_);
+  }
+}
+
+bool ModuleKeyspace::valid() const {
+  return !module_name_.empty() && !local_name_.empty();
+}
+
+std::string ModuleKeyspace::QualifiedName() const {
+  if (!valid()) {
+    return std::string();
+  }
+  return module_name_ + "." + local_name_;
+}
+
+std::string ModuleKeyspace::EncodeKey(const rocksdb::Slice& key) const {
+  if (!valid()) {
+    return std::string();
+  }
+  std::string out = encoded_prefix_;
+  out.append(key.data(), key.size());
+  return out;
+}
+
+bool ModuleKeyspace::DecodeKey(const rocksdb::Slice& storage_key,
+                               std::string* key) const {
+  if (!valid() || !StartsWith(storage_key, encoded_prefix_)) {
+    return false;
+  }
+  if (key != nullptr) {
+    key->assign(storage_key.data() + encoded_prefix_.size(),
+                storage_key.size() - encoded_prefix_.size());
+  }
+  return true;
 }
 
 class ModuleWriteBatch::Impl {
@@ -44,12 +120,29 @@ rocksdb::Status ModuleWriteBatch::Put(StorageColumnFamily column_family,
   return impl_->write_context.Put(column_family, key, value);
 }
 
+rocksdb::Status ModuleWriteBatch::Put(const ModuleKeyspace& keyspace,
+                                      const rocksdb::Slice& key,
+                                      const rocksdb::Slice& value) {
+  if (!keyspace.valid()) {
+    return InvalidKeyspaceStatus();
+  }
+  return Put(StorageColumnFamily::kModule, keyspace.EncodeKey(key), value);
+}
+
 rocksdb::Status ModuleWriteBatch::Delete(StorageColumnFamily column_family,
                                          const rocksdb::Slice& key) {
   if (impl_ == nullptr) {
     return rocksdb::Status::InvalidArgument("module storage is unavailable");
   }
   return impl_->write_context.Delete(column_family, key);
+}
+
+rocksdb::Status ModuleWriteBatch::Delete(const ModuleKeyspace& keyspace,
+                                         const rocksdb::Slice& key) {
+  if (!keyspace.valid()) {
+    return InvalidKeyspaceStatus();
+  }
+  return Delete(StorageColumnFamily::kModule, keyspace.EncodeKey(key));
 }
 
 rocksdb::Status ModuleWriteBatch::Commit() {
@@ -70,6 +163,90 @@ class ModuleSnapshot::Impl {
 ModuleSnapshot::ModuleSnapshot(std::unique_ptr<Impl> impl)
     : impl_(std::move(impl)) {}
 
+class ModuleIterator::Impl {
+ public:
+  Impl(std::unique_ptr<rocksdb::Iterator> iterator_value,
+       ModuleKeyspace keyspace_value, rocksdb::Status status_value)
+      : iterator(std::move(iterator_value)),
+        keyspace(std::move(keyspace_value)),
+        status(std::move(status_value)) {}
+
+  std::unique_ptr<rocksdb::Iterator> iterator;
+  ModuleKeyspace keyspace;
+  rocksdb::Status status;
+  std::string decoded_key;
+  bool valid = false;
+};
+
+ModuleIterator::ModuleIterator(std::unique_ptr<Impl> impl)
+    : impl_(std::move(impl)) {}
+
+ModuleIterator::~ModuleIterator() = default;
+
+ModuleIterator::ModuleIterator(ModuleIterator&&) noexcept = default;
+
+ModuleIterator& ModuleIterator::operator=(ModuleIterator&&) noexcept = default;
+
+void ModuleIterator::Seek(const rocksdb::Slice& key) {
+  if (impl_ == nullptr || !impl_->status.ok() || impl_->iterator == nullptr) {
+    return;
+  }
+  const std::string encoded_key = impl_->keyspace.EncodeKey(key);
+  impl_->iterator->Seek(encoded_key);
+  Refresh();
+}
+
+void ModuleIterator::Next() {
+  if (impl_ == nullptr || !impl_->status.ok() || impl_->iterator == nullptr ||
+      !impl_->iterator->Valid()) {
+    return;
+  }
+  impl_->iterator->Next();
+  Refresh();
+}
+
+bool ModuleIterator::Valid() const {
+  return impl_ != nullptr && impl_->valid;
+}
+
+rocksdb::Slice ModuleIterator::key() const {
+  if (!Valid()) {
+    return rocksdb::Slice();
+  }
+  return rocksdb::Slice(impl_->decoded_key);
+}
+
+rocksdb::Slice ModuleIterator::value() const {
+  if (!Valid() || impl_->iterator == nullptr) {
+    return rocksdb::Slice();
+  }
+  return impl_->iterator->value();
+}
+
+rocksdb::Status ModuleIterator::status() const {
+  if (impl_ == nullptr) {
+    return rocksdb::Status::InvalidArgument("module iterator is unavailable");
+  }
+  if (!impl_->status.ok()) {
+    return impl_->status;
+  }
+  return impl_->iterator != nullptr ? impl_->iterator->status()
+                                    : rocksdb::Status::OK();
+}
+
+void ModuleIterator::Refresh() {
+  if (impl_ == nullptr) {
+    return;
+  }
+  impl_->valid = false;
+  if (!impl_->status.ok() || impl_->iterator == nullptr ||
+      !impl_->iterator->Valid()) {
+    return;
+  }
+  impl_->valid =
+      impl_->keyspace.DecodeKey(impl_->iterator->key(), &impl_->decoded_key);
+}
+
 ModuleSnapshot::~ModuleSnapshot() = default;
 
 ModuleSnapshot::ModuleSnapshot(ModuleSnapshot&&) noexcept = default;
@@ -85,6 +262,15 @@ rocksdb::Status ModuleSnapshot::Get(StorageColumnFamily column_family,
   return impl_->snapshot->Get(column_family, key, value);
 }
 
+rocksdb::Status ModuleSnapshot::Get(const ModuleKeyspace& keyspace,
+                                    const rocksdb::Slice& key,
+                                    std::string* value) const {
+  if (!keyspace.valid()) {
+    return InvalidKeyspaceStatus();
+  }
+  return Get(StorageColumnFamily::kModule, keyspace.EncodeKey(key), value);
+}
+
 rocksdb::Status ModuleSnapshot::ScanPrefix(StorageColumnFamily column_family,
                                            const rocksdb::Slice& prefix,
                                            const ScanVisitor& visitor) const {
@@ -92,6 +278,39 @@ rocksdb::Status ModuleSnapshot::ScanPrefix(StorageColumnFamily column_family,
     return rocksdb::Status::InvalidArgument("module snapshot is unavailable");
   }
   return impl_->snapshot->ScanPrefix(column_family, prefix, visitor);
+}
+
+rocksdb::Status ModuleSnapshot::ScanPrefix(const ModuleKeyspace& keyspace,
+                                           const rocksdb::Slice& prefix,
+                                           const ScanVisitor& visitor) const {
+  std::unique_ptr<ModuleIterator> iter = NewIterator(keyspace);
+  iter->Seek(prefix);
+  while (iter->Valid()) {
+    if (!visitor(iter->key(), iter->value())) {
+      break;
+    }
+    iter->Next();
+  }
+  return iter->status();
+}
+
+std::unique_ptr<ModuleIterator> ModuleSnapshot::NewIterator(
+    const ModuleKeyspace& keyspace) const {
+  if (!keyspace.valid()) {
+    return std::unique_ptr<ModuleIterator>(new ModuleIterator(
+        std::make_unique<ModuleIterator::Impl>(nullptr, keyspace,
+                                               InvalidKeyspaceStatus())));
+  }
+  if (impl_ == nullptr || impl_->snapshot == nullptr) {
+    return std::unique_ptr<ModuleIterator>(new ModuleIterator(
+        std::make_unique<ModuleIterator::Impl>(
+            nullptr, keyspace,
+            rocksdb::Status::InvalidArgument("module snapshot is unavailable"))));
+  }
+  return std::unique_ptr<ModuleIterator>(new ModuleIterator(
+      std::make_unique<ModuleIterator::Impl>(
+          impl_->snapshot->NewIterator(StorageColumnFamily::kModule), keyspace,
+          rocksdb::Status::OK())));
 }
 
 ModuleCommandRegistry::ModuleCommandRegistry(CommandRegistry* registry,
@@ -215,8 +434,14 @@ void ModuleExportRegistry::ClearOwnedExports() {
   shared_state_->ClearOwnedExports(module_namespace_.module_name());
 }
 
-ModuleStorage::ModuleStorage(StorageEngine* storage_engine)
-    : storage_engine_(storage_engine) {}
+ModuleStorage::ModuleStorage(ModuleNamespace module_namespace,
+                             StorageEngine* storage_engine)
+    : module_namespace_(std::move(module_namespace)),
+      storage_engine_(storage_engine) {}
+
+ModuleKeyspace ModuleStorage::Keyspace(const std::string& local_name) const {
+  return ModuleKeyspace(module_namespace_.module_name(), local_name);
+}
 
 std::unique_ptr<ModuleWriteBatch> ModuleStorage::CreateWriteBatch() const {
   if (storage_engine_ == nullptr) {
@@ -228,8 +453,15 @@ std::unique_ptr<ModuleWriteBatch> ModuleStorage::CreateWriteBatch() const {
           storage_engine_)));
 }
 
-ModuleSnapshotService::ModuleSnapshotService(const StorageEngine* storage_engine)
-    : storage_engine_(storage_engine) {}
+ModuleSnapshotService::ModuleSnapshotService(
+    ModuleNamespace module_namespace, const StorageEngine* storage_engine)
+    : module_namespace_(std::move(module_namespace)),
+      storage_engine_(storage_engine) {}
+
+ModuleKeyspace ModuleSnapshotService::Keyspace(
+    const std::string& local_name) const {
+  return ModuleKeyspace(module_namespace_.module_name(), local_name);
+}
 
 std::unique_ptr<ModuleSnapshot> ModuleSnapshotService::Create() const {
   if (storage_engine_ == nullptr) {
@@ -239,6 +471,21 @@ std::unique_ptr<ModuleSnapshot> ModuleSnapshotService::Create() const {
   return std::unique_ptr<ModuleSnapshot>(
       new ModuleSnapshot(std::make_unique<ModuleSnapshot::Impl>(
           storage_engine_->CreateSnapshot())));
+}
+
+ModuleBackgroundService::ModuleBackgroundService(
+    BackgroundExecutor* executor, ModuleNamespace module_namespace)
+    : executor_(executor), module_namespace_(std::move(module_namespace)) {}
+
+rocksdb::Status ModuleBackgroundService::Submit(Task task) const {
+  if (executor_ == nullptr) {
+    std::string message = "module background service is unavailable";
+    if (!module_namespace_.module_name().empty()) {
+      message += " for module=" + module_namespace_.module_name();
+    }
+    return rocksdb::Status::InvalidArgument(message);
+  }
+  return executor_->Submit(std::move(task));
 }
 
 ModuleSchedulerView::ModuleSchedulerView(const Scheduler* scheduler)
@@ -292,6 +539,7 @@ ModuleServices::ModuleServices(ModuleCommandRegistry command_registry,
                                ModuleExportRegistry exports,
                                ModuleStorage storage,
                                ModuleSnapshotService snapshot,
+                               ModuleBackgroundService background,
                                ModuleSchedulerView scheduler,
                                ModuleNamespace name_space,
                                ModuleMetrics metrics)
@@ -299,6 +547,7 @@ ModuleServices::ModuleServices(ModuleCommandRegistry command_registry,
       exports_(std::move(exports)),
       storage_(std::move(storage)),
       snapshot_(std::move(snapshot)),
+      background_(std::move(background)),
       scheduler_(std::move(scheduler)),
       name_space_(std::move(name_space)),
       metrics_(std::move(metrics)) {}

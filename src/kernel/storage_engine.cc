@@ -14,6 +14,7 @@ namespace {
 
 constexpr char kMetaCF[] = "meta";
 constexpr char kHashCF[] = "hash";
+constexpr char kModuleCF[] = "module";
 
 rocksdb::Options BaseOptions() {
   rocksdb::Options options;
@@ -60,6 +61,8 @@ rocksdb::ColumnFamilyHandle* StorageEngine::Handle(
       return meta_cf_;
     case StorageColumnFamily::kHash:
       return hash_cf_;
+    case StorageColumnFamily::kModule:
+      return module_cf_;
   }
   return nullptr;
 }
@@ -78,19 +81,25 @@ rocksdb::Status StorageEngine::OpenWithColumnFamilies(const Config& config) {
   }
 
   if (!status.ok()) {
-    cf_names = {rocksdb::kDefaultColumnFamilyName, kMetaCF, kHashCF};
+    cf_names = {rocksdb::kDefaultColumnFamilyName, kMetaCF, kHashCF,
+                kModuleCF};
   } else {
     bool has_meta = false;
     bool has_hash = false;
+    bool has_module = false;
     for (const auto& name : cf_names) {
       has_meta = has_meta || name == kMetaCF;
       has_hash = has_hash || name == kHashCF;
+      has_module = has_module || name == kModuleCF;
     }
     if (!has_meta) {
       cf_names.push_back(kMetaCF);
     }
     if (!has_hash) {
       cf_names.push_back(kHashCF);
+    }
+    if (!has_module) {
+      cf_names.push_back(kModuleCF);
     }
   }
 
@@ -120,7 +129,8 @@ rocksdb::Status StorageEngine::OpenWithColumnFamilies(const Config& config) {
   default_cf_ = FindHandle(rocksdb::kDefaultColumnFamilyName);
   meta_cf_ = FindHandle(kMetaCF);
   hash_cf_ = FindHandle(kHashCF);
-  if (meta_cf_ == nullptr || hash_cf_ == nullptr) {
+  module_cf_ = FindHandle(kModuleCF);
+  if (meta_cf_ == nullptr || hash_cf_ == nullptr || module_cf_ == nullptr) {
     return rocksdb::Status::Corruption("required column families missing");
   }
   return rocksdb::Status::OK();

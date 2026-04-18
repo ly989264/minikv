@@ -3,6 +3,7 @@
 #include <memory>
 #include <vector>
 
+#include "module/background_executor.h"
 #include "module/module.h"
 #include "module/module_services.h"
 
@@ -42,6 +43,7 @@ class ModuleManager {
   CommandRegistry command_registry_;
   std::shared_ptr<ModuleMetricsStore> metrics_store_;
   std::shared_ptr<ModuleExportRegistry::SharedState> export_store_;
+  BackgroundExecutor background_executor_;
   std::vector<ModuleSlot> modules_;
   bool registration_open_ = false;
   bool export_publish_open_ = false;

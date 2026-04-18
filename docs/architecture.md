@@ -22,7 +22,7 @@ Related documents:
 
 The current implementation is organized as:
 
-`main -> NetworkServer -> RESP parser / runtime CommandRegistry -> Scheduler -> Worker -> builtin module command -> HashModule -> HashIndexingBridge / HashObserver -> ModuleSnapshot / ModuleWriteBatch -> StorageEngine -> RocksDB`
+`main -> NetworkServer -> RESP parser / runtime CommandRegistry -> Scheduler -> Worker -> builtin module command -> HashModule -> HashIndexingBridge / HashObserver -> ModuleSnapshot / ModuleIterator / ModuleWriteBatch -> StorageEngine -> RocksDB`
 
 The responsibilities are:
 
@@ -33,7 +33,7 @@ The responsibilities are:
   per-I/O-thread connection management, RESP parsing, response encoding, and
   response reordering
 - `src/module/`: builtin module SPI, lifecycle, shared export registry, and
-  module service facades
+  module service facades, module keyspace helpers, and background executor
 - `src/command/`: converts parsed RESP parts into registered `Cmd` objects
 - `src/kernel/`: scheduler, storage engine, snapshot, write context, command
   registry, and reply helpers
@@ -83,17 +83,32 @@ semantics:
 
 ## Storage Model
 
-`StorageEngine` opens RocksDB with three column families:
+`StorageEngine` opens RocksDB with four column families:
 
 - `default`
 - `meta`
 - `hash`
+- `module`
 
 The data layout is driven by `KeyCodec`:
 
 - meta key: `m| + key_length + user_key`
 - hash data key prefix: `h| + key_length + user_key + version`
 - hash data key: `hash_prefix + field`
+
+Module-private storage uses `ModuleKeyspace` on top of the shared `module`
+column family:
+
+- keyspace identity is `module_name + local_keyspace_name`
+- the encoded key prefix is length-prefixed binary data rather than a dedicated
+  search-specific column family
+- modules read and write that state through keyspace-aware `ModuleSnapshot`,
+  `ModuleIterator`, and `ModuleWriteBatch` helpers instead of hard-coding
+  global `StorageColumnFamily` choices
+
+Current hash behavior is intentionally unchanged. `HashModule` still stores its
+user-visible data in `meta` and `hash`, while the `module` column family exists
+for module-private infrastructure such as future search metadata.
 
 The metadata payload currently contains:
 
@@ -120,6 +135,11 @@ Benefits of this model:
 - network progress is decoupled from RocksDB calls
 - different keys can execute in parallel across workers
 - same-connection response order is preserved by the network reorder buffer
+
+Module-owned asynchronous maintenance now runs on one minimal background
+executor thread exposed through `ModuleBackgroundService`. This is intentionally
+separate from request execution and is not a replacement for the keyed worker
+model.
 
 ## Architecture Audit
 
@@ -154,6 +174,11 @@ observer callbacks, but the actual search feature surface is still absent.
 Impact:
 
 - hash writes can now carry observer-side index updates in the same write batch
+- module-private search state can now live in one shared `module` column family
+  behind `ModuleKeyspace`
+- future search modules can iterate that state through `ModuleIterator` and use
+  one minimal `BackgroundExecutor` without learning the kernel's column-family
+  layout
 - there is still no `SearchModule`
 - there are still no `FT.CREATE`, `FT.SEARCH`, or other `FT.*` commands
 
@@ -161,6 +186,36 @@ Impact:
 
 The metadata contains `version` and `expire_at_ms`, but the current hash
 implementation still uses `version = 1` and does not enforce TTL.
+
+### P3: Module Storage Boundary Still Has A Compatibility Escape Hatch
+
+PR-B added `ModuleKeyspace` plus keyspace-aware `ModuleSnapshot`,
+`ModuleIterator`, and `ModuleWriteBatch` helpers, but the module service layer
+still keeps raw `StorageColumnFamily` read/write entrypoints for the existing
+hash path.
+
+Impact:
+
+- new module-private state should use `ModuleKeyspace` rather than raw
+  column-family access
+- `HashModule` and current hash observers remain compatible without changing
+  their data layout
+- the kernel-to-module boundary is not fully narrowed yet, so a future cleanup
+  pass should retire the raw-CF helpers once remaining callers migrate
+
+### P3: Module Background Execution Is Intentionally Minimal
+
+PR-B introduced one shared `BackgroundExecutor` behind
+`ModuleBackgroundService`, but it is deliberately a small single-thread FIFO
+facility rather than a general-purpose thread pool.
+
+Impact:
+
+- this is enough for lightweight module maintenance and search-prep plumbing
+- there is no cancellation, prioritization, per-module quota, or structured
+  background task error reporting
+- future work should treat this as a narrow module helper, not as a second
+  request scheduler
 
 ### P3: Network Operability Is Still Minimal
 

@@ -57,6 +57,7 @@ set(MINIKV_INTERNAL_HEADERS
   src/kernel/storage_engine.h
   src/kernel/write_context.h
   src/module/module.h
+  src/module/background_executor.h
   src/module/module_manager.h
   src/module/module_services.h
   src/modules/core/core_module.h
@@ -80,6 +81,7 @@ set(MINIKV_SOURCES
   src/kernel/storage_engine.cc
   src/kernel/write_context.cc
   src/module/module_manager.cc
+  src/module/background_executor.cc
   src/module/module_services.cc
   src/modules/core/core_module.cc
   src/modules/hash/hash_module.cc
@@ -138,6 +140,12 @@ if(BUILD_TESTING)
     tests/module_test/module_manager_test.cc)
   minikv_add_test(minikv_module_exports_test
     tests/module_test/module_exports_test.cc)
+  minikv_add_test(minikv_module_keyspace_test
+    tests/module_test/module_keyspace_test.cc)
+  minikv_add_test(minikv_module_iterator_test
+    tests/module_test/module_iterator_test.cc)
+  minikv_add_test(minikv_background_executor_test
+    tests/module_test/background_executor_test.cc)
   minikv_add_test(minikv_hash_bridge_test
     tests/module_test/hash_bridge_test.cc)
   minikv_add_test(minikv_hash_observer_test

@@ -19,6 +19,7 @@ enum class StorageColumnFamily {
   kDefault,
   kMeta,
   kHash,
+  kModule,
 };
 
 class StorageEngine {
@@ -62,6 +63,7 @@ class StorageEngine {
   rocksdb::ColumnFamilyHandle* default_cf_ = nullptr;
   rocksdb::ColumnFamilyHandle* meta_cf_ = nullptr;
   rocksdb::ColumnFamilyHandle* hash_cf_ = nullptr;
+  rocksdb::ColumnFamilyHandle* module_cf_ = nullptr;
 };
 
 }  // namespace minikv
