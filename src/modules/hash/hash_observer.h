@@ -15,6 +15,8 @@ struct HashMutation {
   enum class Type {
     kPutField,
     kDeleteFields,
+    // Whole-key delete observes the pre-delete incarnation. `deleted_fields`
+    // enumerates every field visible to readers before the tombstone write.
     kDeleteKey,
   };
 

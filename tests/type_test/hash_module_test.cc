@@ -13,10 +13,11 @@
 #include "kernel/write_context.h"
 #include "module/module.h"
 #include "module/module_manager.h"
+#include "module/module_services.h"
 #include "modules/core/core_module.h"
 #include "modules/core/key_service.h"
-#include "rocksdb/db.h"
 #include "modules/hash/hash_module.h"
+#include "rocksdb/db.h"
 
 namespace {
 
@@ -47,13 +48,26 @@ class HashModuleTest : public ::testing::Test {
     scheduler_ = std::make_unique<minikv::Scheduler>(1, 16);
 
     std::vector<std::unique_ptr<minikv::Module>> modules;
-    modules.push_back(std::make_unique<minikv::CoreModule>());
+    modules.push_back(std::make_unique<minikv::CoreModule>(
+        [this]() { return current_time_ms_; }));
     auto hash_module = std::make_unique<minikv::HashModule>();
     hash_module_ = hash_module.get();
     modules.push_back(std::move(hash_module));
     module_manager_ = std::make_unique<minikv::ModuleManager>(
         storage_engine_.get(), scheduler_.get(), std::move(modules));
     ASSERT_TRUE(module_manager_->Initialize().ok());
+  }
+
+  void CloseModule() {
+    module_manager_.reset();
+    scheduler_.reset();
+    hash_module_ = nullptr;
+    storage_engine_.reset();
+  }
+
+  void ReopenModule() {
+    CloseModule();
+    OpenModule();
   }
 
   void PutRawMetadata(const std::string& key,
@@ -80,8 +94,46 @@ class HashModuleTest : public ::testing::Test {
     return metadata;
   }
 
+  minikv::DefaultCoreKeyService MakeKeyService() const {
+    return minikv::DefaultCoreKeyService([this]() { return current_time_ms_; });
+  }
+
+  std::unique_ptr<minikv::ModuleSnapshot> CreateSnapshot() const {
+    minikv::ModuleSnapshotService snapshots(minikv::ModuleNamespace("core"),
+                                            storage_engine_.get());
+    return snapshots.Create();
+  }
+
+  std::unique_ptr<minikv::ModuleWriteBatch> CreateWriteBatch() const {
+    minikv::ModuleStorage storage(minikv::ModuleNamespace("core"),
+                                  storage_engine_.get());
+    return storage.CreateWriteBatch();
+  }
+
+  minikv::KeyLookup LookupKey(const std::string& key) const {
+    minikv::DefaultCoreKeyService key_service = MakeKeyService();
+    std::unique_ptr<minikv::ModuleSnapshot> snapshot = CreateSnapshot();
+    minikv::KeyLookup lookup;
+    EXPECT_TRUE(key_service.Lookup(snapshot.get(), key, &lookup).ok());
+    return lookup;
+  }
+
+  void DeleteWholeKey(const std::string& key) {
+    minikv::DefaultCoreKeyService key_service = MakeKeyService();
+    std::unique_ptr<minikv::ModuleSnapshot> snapshot = CreateSnapshot();
+    std::unique_ptr<minikv::ModuleWriteBatch> write_batch = CreateWriteBatch();
+    minikv::KeyLookup lookup;
+    ASSERT_TRUE(key_service.Lookup(snapshot.get(), key, &lookup).ok());
+    ASSERT_EQ(lookup.state, minikv::KeyLifecycleState::kLive);
+    ASSERT_TRUE(
+        hash_module_->DeleteWholeKey(snapshot.get(), write_batch.get(), key, lookup)
+            .ok());
+    ASSERT_TRUE(write_batch->Commit().ok());
+  }
+
   static inline int counter_ = 0;
   std::string db_path_;
+  uint64_t current_time_ms_ = 10'000;
   std::unique_ptr<minikv::Scheduler> scheduler_;
   std::unique_ptr<minikv::ModuleManager> module_manager_;
   std::unique_ptr<minikv::StorageEngine> storage_engine_;
@@ -104,7 +156,7 @@ TEST_F(HashModuleTest, PutFieldAndReadAll) {
   ASSERT_EQ(values.size(), 2U);
 }
 
-TEST_F(HashModuleTest, DeleteFieldsRemovesFieldsAndMeta) {
+TEST_F(HashModuleTest, DeleteFieldsRemovesFieldsAndWritesTombstone) {
   ASSERT_TRUE(hash_module_->PutField("user:2", "a", "1", nullptr).ok());
   ASSERT_TRUE(hash_module_->PutField("user:2", "b", "2", nullptr).ok());
 
@@ -120,6 +172,13 @@ TEST_F(HashModuleTest, DeleteFieldsRemovesFieldsAndMeta) {
   ASSERT_EQ(deleted, 1U);
   ASSERT_TRUE(hash_module_->ReadAll("user:2", &values).ok());
   ASSERT_TRUE(values.empty());
+
+  const minikv::KeyMetadata tombstone = ReadRawMetadata("user:2");
+  EXPECT_EQ(tombstone.size, 0U);
+  EXPECT_EQ(tombstone.expire_at_ms, minikv::kLogicalDeleteExpireAtMs);
+
+  const minikv::KeyLookup lookup = LookupKey("user:2");
+  EXPECT_EQ(lookup.state, minikv::KeyLifecycleState::kTombstone);
 }
 
 TEST_F(HashModuleTest, MissingKeyOperationsReturnEmptySuccess) {
@@ -148,12 +207,7 @@ TEST_F(HashModuleTest, DeleteCountsOnlyExistingFields) {
 
 TEST_F(HashModuleTest, ReopenPreservesHashData) {
   ASSERT_TRUE(hash_module_->PutField("user:reopen", "name", "alice", nullptr).ok());
-  module_manager_.reset();
-  scheduler_.reset();
-  hash_module_ = nullptr;
-  storage_engine_.reset();
-
-  OpenModule();
+  ReopenModule();
 
   std::vector<minikv::FieldValue> values;
   ASSERT_TRUE(hash_module_->ReadAll("user:reopen", &values).ok());
@@ -188,13 +242,43 @@ TEST_F(HashModuleTest, NonHashMetadataStillReturnsTypeMismatch) {
   EXPECT_EQ(deleted, 0U);
 }
 
+TEST_F(HashModuleTest, LookupReturnsExplicitLifecycleStates) {
+  minikv::DefaultCoreKeyService key_service = MakeKeyService();
+  std::unique_ptr<minikv::ModuleSnapshot> snapshot = CreateSnapshot();
+
+  minikv::KeyLookup lookup;
+  ASSERT_TRUE(key_service.Lookup(snapshot.get(), "missing", &lookup).ok());
+  EXPECT_EQ(lookup.state, minikv::KeyLifecycleState::kMissing);
+
+  minikv::KeyMetadata expired;
+  expired.type = minikv::ObjectType::kHash;
+  expired.encoding = minikv::ObjectEncoding::kHashPlain;
+  expired.version = 3;
+  expired.size = 1;
+  expired.expire_at_ms = current_time_ms_ - 1;
+  PutRawMetadata("user:expired-state", expired);
+
+  minikv::KeyMetadata tombstone = expired;
+  tombstone.version = 4;
+  tombstone.expire_at_ms = minikv::kLogicalDeleteExpireAtMs;
+  PutRawMetadata("user:tombstone-state", tombstone);
+
+  snapshot = CreateSnapshot();
+  ASSERT_TRUE(key_service.Lookup(snapshot.get(), "user:expired-state", &lookup).ok());
+  EXPECT_EQ(lookup.state, minikv::KeyLifecycleState::kExpired);
+
+  ASSERT_TRUE(
+      key_service.Lookup(snapshot.get(), "user:tombstone-state", &lookup).ok());
+  EXPECT_EQ(lookup.state, minikv::KeyLifecycleState::kTombstone);
+}
+
 TEST_F(HashModuleTest, ExpiredMetadataRebuildBumpsVersion) {
   minikv::KeyMetadata expired;
   expired.type = minikv::ObjectType::kHash;
   expired.encoding = minikv::ObjectEncoding::kHashPlain;
   expired.version = 7;
   expired.size = 1;
-  expired.expire_at_ms = 1;
+  expired.expire_at_ms = current_time_ms_ - 1;
 
   minikv::WriteContext write_context(storage_engine_.get());
   ASSERT_TRUE(write_context
@@ -211,6 +295,13 @@ TEST_F(HashModuleTest, ExpiredMetadataRebuildBumpsVersion) {
                   .ok());
   ASSERT_TRUE(write_context.Commit().ok());
 
+  std::vector<minikv::FieldValue> values;
+  ASSERT_TRUE(hash_module_->ReadAll("user:expired", &values).ok());
+  ASSERT_TRUE(values.empty());
+
+  const minikv::KeyLookup lookup = LookupKey("user:expired");
+  EXPECT_EQ(lookup.state, minikv::KeyLifecycleState::kExpired);
+
   bool inserted = false;
   ASSERT_TRUE(
       hash_module_->PutField("user:expired", "fresh", "new-value", &inserted)
@@ -224,8 +315,47 @@ TEST_F(HashModuleTest, ExpiredMetadataRebuildBumpsVersion) {
   EXPECT_EQ(rebuilt.size, 1U);
   EXPECT_EQ(rebuilt.expire_at_ms, 0U);
 
-  std::vector<minikv::FieldValue> values;
   ASSERT_TRUE(hash_module_->ReadAll("user:expired", &values).ok());
+  ASSERT_EQ(values.size(), 1U);
+  EXPECT_EQ(values[0].field, "fresh");
+  EXPECT_EQ(values[0].value, "new-value");
+}
+
+TEST_F(HashModuleTest, TombstoneSurvivesReopenAndRecreateBumpsVersion) {
+  ASSERT_TRUE(hash_module_->PutField("user:tombstone", "name", "alice", nullptr)
+                  .ok());
+  ASSERT_TRUE(hash_module_->PutField("user:tombstone", "city", "shanghai",
+                                     nullptr)
+                  .ok());
+
+  const minikv::KeyMetadata before_delete = ReadRawMetadata("user:tombstone");
+  DeleteWholeKey("user:tombstone");
+
+  minikv::KeyLookup lookup = LookupKey("user:tombstone");
+  ASSERT_EQ(lookup.state, minikv::KeyLifecycleState::kTombstone);
+  EXPECT_EQ(lookup.metadata.version, before_delete.version);
+
+  ReopenModule();
+
+  lookup = LookupKey("user:tombstone");
+  ASSERT_EQ(lookup.state, minikv::KeyLifecycleState::kTombstone);
+  EXPECT_EQ(lookup.metadata.version, before_delete.version);
+
+  std::vector<minikv::FieldValue> values;
+  ASSERT_TRUE(hash_module_->ReadAll("user:tombstone", &values).ok());
+  ASSERT_TRUE(values.empty());
+
+  bool inserted = false;
+  ASSERT_TRUE(hash_module_->PutField("user:tombstone", "fresh", "new-value",
+                                     &inserted)
+                  .ok());
+  ASSERT_TRUE(inserted);
+
+  const minikv::KeyMetadata rebuilt = ReadRawMetadata("user:tombstone");
+  EXPECT_EQ(rebuilt.version, before_delete.version + 1);
+  EXPECT_EQ(rebuilt.expire_at_ms, 0U);
+
+  ASSERT_TRUE(hash_module_->ReadAll("user:tombstone", &values).ok());
   ASSERT_EQ(values.size(), 1U);
   EXPECT_EQ(values[0].field, "fresh");
   EXPECT_EQ(values[0].value, "new-value");

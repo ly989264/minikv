@@ -12,6 +12,7 @@
 #include "module/module_manager.h"
 #include "module/module_services.h"
 #include "modules/core/core_module.h"
+#include "modules/core/key_service.h"
 #include "modules/hash/hash_indexing_bridge.h"
 #include "modules/hash/hash_module.h"
 #include "modules/hash/hash_observer.h"
@@ -135,6 +136,24 @@ class HashObserverTest : public ::testing::Test {
     return storage_engine_->Get(minikv::StorageColumnFamily::kDefault, key, value);
   }
 
+  void DeleteWholeKey(const std::string& key) {
+    minikv::DefaultCoreKeyService key_service;
+    minikv::ModuleSnapshotService snapshots(minikv::ModuleNamespace("core"),
+                                            storage_engine_.get());
+    minikv::ModuleStorage storage(minikv::ModuleNamespace("core"),
+                                  storage_engine_.get());
+    std::unique_ptr<minikv::ModuleSnapshot> snapshot = snapshots.Create();
+    std::unique_ptr<minikv::ModuleWriteBatch> write_batch =
+        storage.CreateWriteBatch();
+    minikv::KeyLookup lookup;
+    ASSERT_TRUE(key_service.Lookup(snapshot.get(), key, &lookup).ok());
+    ASSERT_EQ(lookup.state, minikv::KeyLifecycleState::kLive);
+    ASSERT_TRUE(
+        hash_module_->DeleteWholeKey(snapshot.get(), write_batch.get(), key, lookup)
+            .ok());
+    ASSERT_TRUE(write_batch->Commit().ok());
+  }
+
   static inline int counter_ = 0;
   std::string db_path_;
   std::unique_ptr<minikv::Scheduler> scheduler_;
@@ -211,6 +230,24 @@ TEST_F(HashObserverTest,
   std::vector<minikv::FieldValue> values;
   ASSERT_TRUE(hash_module_->ReadAll("user:fail", &values).ok());
   EXPECT_TRUE(values.empty());
+}
+
+TEST_F(HashObserverTest, WholeKeyDeleteObserverEnumeratesVisibleFields) {
+  ASSERT_NE(bridge(), nullptr);
+  ASSERT_TRUE(hash_module_->PutField("user:whole", "name", "alice", nullptr).ok());
+  ASSERT_TRUE(hash_module_->PutField("user:whole", "city", "shanghai", nullptr)
+                  .ok());
+
+  MarkerObserver marker;
+  ASSERT_TRUE(bridge()->AddObserver(&marker).ok());
+
+  DeleteWholeKey("user:whole");
+
+  std::string marker_value;
+  ASSERT_TRUE(ReadDefault(MarkerObserver::DeleteMarkerKey("user:whole"),
+                          &marker_value)
+                  .ok());
+  EXPECT_EQ(marker_value, "city,name");
 }
 
 }  // namespace

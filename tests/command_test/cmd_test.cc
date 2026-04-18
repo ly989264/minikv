@@ -132,7 +132,8 @@ class ModuleRuntimeTest : public ::testing::Test {
     scheduler_ = std::make_unique<minikv::Scheduler>(2, 16);
 
     std::vector<std::unique_ptr<minikv::Module>> modules;
-    modules.push_back(std::make_unique<minikv::CoreModule>());
+    modules.push_back(std::make_unique<minikv::CoreModule>(
+        [this]() { return now_ms_; }));
     auto hash_module = std::make_unique<minikv::HashModule>();
     hash_module_ = hash_module.get();
     modules.push_back(std::move(hash_module));
@@ -161,8 +162,11 @@ class ModuleRuntimeTest : public ::testing::Test {
     return cmd;
   }
 
+  void AdvanceTimeMs(uint64_t delta_ms) { now_ms_ += delta_ms; }
+
   static inline int counter_ = 0;
   std::string db_path_;
+  uint64_t now_ms_ = 10'000;
   std::unique_ptr<minikv::Scheduler> scheduler_;
   std::unique_ptr<minikv::ModuleManager> module_manager_;
   std::unique_ptr<minikv::StorageEngine> storage_engine_;
@@ -193,6 +197,30 @@ TEST_F(ModuleRuntimeTest, FindsRegisteredCommandsByName) {
   EXPECT_EQ(del->name, "DEL");
   EXPECT_EQ(del->owner_module, "core");
   ExpectFlags(del->flags, false, true, false, true);
+
+  const minikv::CmdRegistration* expire = registry().Find("EXPIRE");
+  ASSERT_NE(expire, nullptr);
+  EXPECT_EQ(expire->name, "EXPIRE");
+  EXPECT_EQ(expire->owner_module, "core");
+  ExpectFlags(expire->flags, false, true, false, true);
+
+  const minikv::CmdRegistration* ttl = registry().Find("TTL");
+  ASSERT_NE(ttl, nullptr);
+  EXPECT_EQ(ttl->name, "TTL");
+  EXPECT_EQ(ttl->owner_module, "core");
+  ExpectFlags(ttl->flags, true, false, true, false);
+
+  const minikv::CmdRegistration* pttl = registry().Find("PTTL");
+  ASSERT_NE(pttl, nullptr);
+  EXPECT_EQ(pttl->name, "PTTL");
+  EXPECT_EQ(pttl->owner_module, "core");
+  ExpectFlags(pttl->flags, true, false, true, false);
+
+  const minikv::CmdRegistration* persist = registry().Find("PERSIST");
+  ASSERT_NE(persist, nullptr);
+  EXPECT_EQ(persist->name, "PERSIST");
+  EXPECT_EQ(persist->owner_module, "core");
+  ExpectFlags(persist->flags, false, true, true, false);
 
   const minikv::CmdRegistration* hset = registry().Find("HSET");
   ASSERT_NE(hset, nullptr);
@@ -261,6 +289,25 @@ TEST_F(ModuleRuntimeTest, CreatesCommandsFromRespParts) {
   ExpectLockPlan(del->lock_plan(), minikv::Cmd::LockPlan::Kind::kMulti, "",
                  {"user:2", "user:3", "user:4"});
   ExpectFlags(del->Flags(), false, true, false, true);
+
+  std::unique_ptr<minikv::Cmd> expire;
+  ASSERT_TRUE(
+      minikv::CreateCmd(registry(), {"EXPIRE", "user:ttl", "5"}, &expire).ok());
+  ASSERT_NE(expire, nullptr);
+  EXPECT_EQ(expire->Name(), "EXPIRE");
+  EXPECT_EQ(expire->RouteKey(), "user:ttl");
+  ExpectLockPlan(expire->lock_plan(), minikv::Cmd::LockPlan::Kind::kSingle,
+                 "user:ttl", {});
+  ExpectFlags(expire->Flags(), false, true, false, true);
+
+  std::unique_ptr<minikv::Cmd> ttl;
+  ASSERT_TRUE(minikv::CreateCmd(registry(), {"TTL", "user:ttl"}, &ttl).ok());
+  ASSERT_NE(ttl, nullptr);
+  EXPECT_EQ(ttl->Name(), "TTL");
+  EXPECT_EQ(ttl->RouteKey(), "user:ttl");
+  ExpectLockPlan(ttl->lock_plan(), minikv::Cmd::LockPlan::Kind::kSingle,
+                 "user:ttl", {});
+  ExpectFlags(ttl->Flags(), true, false, true, false);
 
   std::unique_ptr<minikv::Cmd> hset;
   ASSERT_TRUE(
@@ -334,6 +381,43 @@ TEST_F(ModuleRuntimeTest, RejectsBadArgumentsAndNullOutputs) {
   status = minikv::CreateCmd(registry(), {"DEL"}, &cmd);
   ASSERT_TRUE(status.IsInvalidArgument());
   EXPECT_NE(status.ToString().find("missing key"), std::string::npos);
+
+  status = minikv::CreateCmd(registry(), {"EXPIRE"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("missing key"), std::string::npos);
+
+  status = minikv::CreateCmd(registry(), {"EXPIRE", "user:1"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("EXPIRE requires seconds"),
+            std::string::npos);
+
+  status = minikv::CreateCmd(registry(), {"EXPIRE", "user:1", "bad"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("EXPIRE requires integer seconds"),
+            std::string::npos);
+
+  status = minikv::CreateCmd(registry(), {"TTL"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("missing key"), std::string::npos);
+
+  status = minikv::CreateCmd(registry(), {"TTL", "user:1", "extra"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("TTL takes no extra arguments"),
+            std::string::npos);
+
+  status = minikv::CreateCmd(registry(), {"PTTL", "user:1", "extra"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("PTTL takes no extra arguments"),
+            std::string::npos);
+
+  status = minikv::CreateCmd(registry(), {"PERSIST"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("missing key"), std::string::npos);
+
+  status = minikv::CreateCmd(registry(), {"PERSIST", "user:1", "extra"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("PERSIST takes no extra arguments"),
+            std::string::npos);
 }
 
 TEST(CmdBaseTest, ExecuteRejectsUninitializedCommand) {
@@ -433,6 +517,106 @@ TEST_F(ModuleRuntimeTest, TypeAndExistsExecuteAgainstEngine) {
   ASSERT_TRUE(response.status.ok());
   ASSERT_TRUE(response.reply.IsInteger());
   EXPECT_EQ(response.reply.integer(), 2);
+}
+
+TEST_F(ModuleRuntimeTest, ExpireTtlPttlAndPersistExecuteAgainstEngine) {
+  ASSERT_TRUE(hash_module_->PutField("user:ttl", "name", "alice", nullptr).ok());
+
+  minikv::CommandResponse response = CreateFromParts({"TTL", "user:ttl"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsInteger());
+  EXPECT_EQ(response.reply.integer(), -1);
+
+  response = CreateFromParts({"EXPIRE", "user:ttl", "5"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsInteger());
+  EXPECT_EQ(response.reply.integer(), 1);
+
+  response = CreateFromParts({"PTTL", "user:ttl"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsInteger());
+  EXPECT_EQ(response.reply.integer(), 5000);
+
+  response = CreateFromParts({"TTL", "user:ttl"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsInteger());
+  EXPECT_EQ(response.reply.integer(), 5);
+
+  response = CreateFromParts({"PERSIST", "user:ttl"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsInteger());
+  EXPECT_EQ(response.reply.integer(), 1);
+
+  response = CreateFromParts({"TTL", "user:ttl"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsInteger());
+  EXPECT_EQ(response.reply.integer(), -1);
+
+  response = CreateFromParts({"PERSIST", "user:ttl"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsInteger());
+  EXPECT_EQ(response.reply.integer(), 0);
+}
+
+TEST_F(ModuleRuntimeTest, ExpiredKeysBehaveLikeMissingForCoreCommands) {
+  ASSERT_TRUE(
+      hash_module_->PutField("user:expired", "name", "alice", nullptr).ok());
+  minikv::CommandResponse response =
+      CreateFromParts({"EXPIRE", "user:expired", "5"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  EXPECT_EQ(response.reply.integer(), 1);
+
+  AdvanceTimeMs(5000);
+
+  response = CreateFromParts({"TTL", "user:expired"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsInteger());
+  EXPECT_EQ(response.reply.integer(), -2);
+
+  response = CreateFromParts({"PTTL", "user:expired"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsInteger());
+  EXPECT_EQ(response.reply.integer(), -2);
+
+  response = CreateFromParts({"TYPE", "user:expired"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ExpectBulkString(response.reply, "none");
+
+  response = CreateFromParts({"EXISTS", "user:expired"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsInteger());
+  EXPECT_EQ(response.reply.integer(), 0);
+
+  response = CreateFromParts({"PERSIST", "user:expired"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsInteger());
+  EXPECT_EQ(response.reply.integer(), 0);
+}
+
+TEST_F(ModuleRuntimeTest, ExpireZeroDeletesAndRecreateSeesFreshKey) {
+  ASSERT_TRUE(
+      hash_module_->PutField("user:expire0", "name", "alice", nullptr).ok());
+  ASSERT_TRUE(
+      hash_module_->PutField("user:expire0", "city", "shanghai", nullptr).ok());
+
+  minikv::CommandResponse response =
+      CreateFromParts({"EXPIRE", "user:expire0", "0"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsInteger());
+  EXPECT_EQ(response.reply.integer(), 1);
+
+  response = CreateFromParts({"HGETALL", "user:expire0"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ExpectBulkStringArray(response.reply, {});
+
+  response = CreateFromParts({"HSET", "user:expire0", "fresh", "new"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsInteger());
+  EXPECT_EQ(response.reply.integer(), 1);
+
+  response = CreateFromParts({"HGETALL", "user:expire0"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ExpectBulkStringArray(response.reply, {"fresh", "new"});
 }
 
 TEST_F(ModuleRuntimeTest, HSetAndHGetAllExecuteAgainstEngine) {

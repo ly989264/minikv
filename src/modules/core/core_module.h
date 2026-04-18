@@ -10,6 +10,10 @@ namespace minikv {
 
 class CoreModule : public Module, public WholeKeyDeleteRegistry {
  public:
+  using TimeSource = DefaultCoreKeyService::TimeSource;
+
+  explicit CoreModule(TimeSource time_source = {});
+
   std::string_view Name() const override { return "core"; }
   rocksdb::Status OnLoad(ModuleServices& services) override;
   rocksdb::Status OnStart(ModuleServices& services) override;

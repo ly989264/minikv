@@ -1,6 +1,9 @@
 #include "modules/core/core_module.h"
 
 #include <algorithm>
+#include <cerrno>
+#include <cstdlib>
+#include <limits>
 #include <memory>
 #include <unordered_set>
 #include <vector>
@@ -20,6 +23,55 @@ std::vector<std::string> CollectKeys(const CmdInput& input) {
   keys.push_back(input.key);
   keys.insert(keys.end(), input.args.begin(), input.args.end());
   return keys;
+}
+
+bool IsLive(const KeyLookup& lookup) {
+  return lookup.state == KeyLifecycleState::kLive;
+}
+
+bool ParseInt64(const std::string& input, int64_t* value) {
+  if (value == nullptr || input.empty()) {
+    return false;
+  }
+
+  errno = 0;
+  char* parse_end = nullptr;
+  const long long parsed = std::strtoll(input.c_str(), &parse_end, 10);
+  if (parse_end == nullptr || *parse_end != '\0' || errno == ERANGE) {
+    return false;
+  }
+  *value = static_cast<int64_t>(parsed);
+  return true;
+}
+
+uint64_t ComputeExpireAtMs(uint64_t now_ms, int64_t ttl_seconds) {
+  const uint64_t max_value = std::numeric_limits<uint64_t>::max();
+  const uint64_t ttl_seconds_u = static_cast<uint64_t>(ttl_seconds);
+  if (ttl_seconds_u > max_value / 1000) {
+    return max_value;
+  }
+  const uint64_t ttl_ms = ttl_seconds_u * 1000;
+  if (ttl_ms > max_value - now_ms) {
+    return max_value;
+  }
+  return now_ms + ttl_ms;
+}
+
+rocksdb::Status DeleteLiveKey(CoreModule* module, ModuleSnapshot* snapshot,
+                              ModuleWriteBatch* write_batch,
+                              const std::string& key,
+                              const KeyLookup& lookup) {
+  if (module == nullptr) {
+    return rocksdb::Status::InvalidArgument(
+        "core delete services are unavailable");
+  }
+
+  WholeKeyDeleteHandler* handler = module->FindHandler(lookup.metadata.type);
+  if (handler == nullptr) {
+    return rocksdb::Status::InvalidArgument(
+        "DEL is unsupported for key type");
+  }
+  return handler->DeleteWholeKey(snapshot, write_batch, key, lookup);
 }
 
 class PingCmd : public Cmd {
@@ -71,7 +123,7 @@ class TypeCmd : public Cmd {
     if (!status.ok()) {
       return MakeStatus(std::move(status));
     }
-    if (!lookup.exists) {
+    if (!IsLive(lookup)) {
       return MakeBulkString("none");
     }
     return MakeBulkString(key_service_->ObjectTypeName(lookup.metadata.type));
@@ -114,7 +166,7 @@ class ExistsCmd : public Cmd {
       if (!status.ok()) {
         return MakeStatus(std::move(status));
       }
-      if (lookup.exists) {
+      if (IsLive(lookup)) {
         ++exists;
       }
     }
@@ -168,17 +220,12 @@ class DelCmd : public Cmd {
       if (!status.ok()) {
         return MakeStatus(std::move(status));
       }
-      if (!lookup.exists) {
+      if (!IsLive(lookup)) {
         continue;
       }
 
-      WholeKeyDeleteHandler* handler = module_->FindHandler(lookup.metadata.type);
-      if (handler == nullptr) {
-        return MakeStatus(
-            rocksdb::Status::InvalidArgument("DEL is unsupported for key type"));
-      }
-      status = handler->DeleteWholeKey(snapshot.get(), write_batch.get(), key,
-                                      lookup);
+      status =
+          DeleteLiveKey(module_, snapshot.get(), write_batch.get(), key, lookup);
       if (!status.ok()) {
         return MakeStatus(std::move(status));
       }
@@ -202,7 +249,188 @@ class DelCmd : public Cmd {
   std::vector<std::string> keys_;
 };
 
+class ExpireCmd : public Cmd {
+ public:
+  ExpireCmd(const CmdRegistration& registration, ModuleServices* services,
+            const CoreKeyService* key_service, CoreModule* module)
+      : Cmd(registration.name, registration.flags),
+        services_(services),
+        key_service_(key_service),
+        module_(module) {}
+
+ private:
+  rocksdb::Status DoInitial(const CmdInput& input) override {
+    if (!input.has_key) {
+      return rocksdb::Status::InvalidArgument("missing key");
+    }
+    if (input.args.size() != 1) {
+      return rocksdb::Status::InvalidArgument("EXPIRE requires seconds");
+    }
+    if (!ParseInt64(input.args[0], &ttl_seconds_)) {
+      return rocksdb::Status::InvalidArgument(
+          "EXPIRE requires integer seconds");
+    }
+    key_ = input.key;
+    SetRouteKey(key_);
+    return rocksdb::Status::OK();
+  }
+
+  CommandResponse Do() override {
+    if (services_ == nullptr || key_service_ == nullptr || module_ == nullptr) {
+      return MakeStatus(
+          rocksdb::Status::InvalidArgument("core expire services are unavailable"));
+    }
+
+    std::unique_ptr<ModuleSnapshot> snapshot = services_->snapshot().Create();
+    KeyLookup lookup;
+    rocksdb::Status status = key_service_->Lookup(snapshot.get(), key_, &lookup);
+    if (!status.ok()) {
+      return MakeStatus(std::move(status));
+    }
+    if (!IsLive(lookup)) {
+      return MakeInteger(0);
+    }
+
+    std::unique_ptr<ModuleWriteBatch> write_batch =
+        services_->storage().CreateWriteBatch();
+    if (ttl_seconds_ <= 0) {
+      status = DeleteLiveKey(module_, snapshot.get(), write_batch.get(), key_,
+                             lookup);
+    } else {
+      KeyMetadata metadata = lookup.metadata;
+      metadata.expire_at_ms =
+          ComputeExpireAtMs(key_service_->CurrentTimeMs(), ttl_seconds_);
+      status = key_service_->PutMetadata(write_batch.get(), key_, metadata);
+    }
+    if (!status.ok()) {
+      return MakeStatus(std::move(status));
+    }
+
+    status = write_batch->Commit();
+    if (!status.ok()) {
+      return MakeStatus(std::move(status));
+    }
+    return MakeInteger(1);
+  }
+
+  ModuleServices* services_ = nullptr;
+  const CoreKeyService* key_service_ = nullptr;
+  CoreModule* module_ = nullptr;
+  std::string key_;
+  int64_t ttl_seconds_ = 0;
+};
+
+class TtlCmd : public Cmd {
+ public:
+  TtlCmd(const CmdRegistration& registration, ModuleServices* services,
+         const CoreKeyService* key_service, bool return_millis)
+      : Cmd(registration.name, registration.flags),
+        services_(services),
+        key_service_(key_service),
+        return_millis_(return_millis) {}
+
+ private:
+  rocksdb::Status DoInitial(const CmdInput& input) override {
+    if (!input.has_key) {
+      return rocksdb::Status::InvalidArgument("missing key");
+    }
+    if (!input.args.empty()) {
+      return rocksdb::Status::InvalidArgument(Name() +
+                                              " takes no extra arguments");
+    }
+    key_ = input.key;
+    SetRouteKey(key_);
+    return rocksdb::Status::OK();
+  }
+
+  CommandResponse Do() override {
+    if (services_ == nullptr || key_service_ == nullptr) {
+      return MakeStatus(
+          rocksdb::Status::InvalidArgument("core key service is unavailable"));
+    }
+
+    std::unique_ptr<ModuleSnapshot> snapshot = services_->snapshot().Create();
+    KeyLookup lookup;
+    rocksdb::Status status = key_service_->Lookup(snapshot.get(), key_, &lookup);
+    if (!status.ok()) {
+      return MakeStatus(std::move(status));
+    }
+
+    const int64_t ttl_ms = key_service_->GetRemainingTtlMs(lookup);
+    if (return_millis_ || ttl_ms < 0) {
+      return MakeInteger(ttl_ms);
+    }
+    return MakeInteger(ttl_ms / 1000);
+  }
+
+  ModuleServices* services_ = nullptr;
+  const CoreKeyService* key_service_ = nullptr;
+  bool return_millis_ = false;
+  std::string key_;
+};
+
+class PersistCmd : public Cmd {
+ public:
+  PersistCmd(const CmdRegistration& registration, ModuleServices* services,
+             const CoreKeyService* key_service)
+      : Cmd(registration.name, registration.flags),
+        services_(services),
+        key_service_(key_service) {}
+
+ private:
+  rocksdb::Status DoInitial(const CmdInput& input) override {
+    if (!input.has_key) {
+      return rocksdb::Status::InvalidArgument("missing key");
+    }
+    if (!input.args.empty()) {
+      return rocksdb::Status::InvalidArgument(
+          "PERSIST takes no extra arguments");
+    }
+    key_ = input.key;
+    SetRouteKey(key_);
+    return rocksdb::Status::OK();
+  }
+
+  CommandResponse Do() override {
+    if (services_ == nullptr || key_service_ == nullptr) {
+      return MakeStatus(
+          rocksdb::Status::InvalidArgument("core key service is unavailable"));
+    }
+
+    std::unique_ptr<ModuleSnapshot> snapshot = services_->snapshot().Create();
+    KeyLookup lookup;
+    rocksdb::Status status = key_service_->Lookup(snapshot.get(), key_, &lookup);
+    if (!status.ok()) {
+      return MakeStatus(std::move(status));
+    }
+    if (!IsLive(lookup) || lookup.metadata.expire_at_ms == 0) {
+      return MakeInteger(0);
+    }
+
+    KeyMetadata metadata = lookup.metadata;
+    metadata.expire_at_ms = 0;
+    std::unique_ptr<ModuleWriteBatch> write_batch =
+        services_->storage().CreateWriteBatch();
+    status = key_service_->PutMetadata(write_batch.get(), key_, metadata);
+    if (!status.ok()) {
+      return MakeStatus(std::move(status));
+    }
+    status = write_batch->Commit();
+    if (!status.ok()) {
+      return MakeStatus(std::move(status));
+    }
+    return MakeInteger(1);
+  }
+
+  ModuleServices* services_ = nullptr;
+  const CoreKeyService* key_service_ = nullptr;
+  std::string key_;
+};
+
 }  // namespace
+
+CoreModule::CoreModule(TimeSource time_source)
+    : key_service_(std::move(time_source)) {}
 
 rocksdb::Status CoreModule::OnLoad(ModuleServices& services) {
   rocksdb::Status status = services.exports().Publish<CoreKeyService>(
@@ -245,6 +473,48 @@ rocksdb::Status CoreModule::OnLoad(ModuleServices& services) {
        [this, services_ptr](const CmdRegistration& registration) {
          return std::make_unique<ExistsCmd>(registration, services_ptr,
                                             &key_service_);
+       }});
+  if (status.ok()) {
+    services.metrics().IncrementCounter("commands.registered");
+  }
+
+  status = services.command_registry().Register(
+      {"EXPIRE", CmdFlags::kWrite | CmdFlags::kSlow,
+       CommandSource::kBuiltin, "",
+       [this, services_ptr](const CmdRegistration& registration) {
+         return std::make_unique<ExpireCmd>(registration, services_ptr,
+                                            &key_service_, this);
+       }});
+  if (status.ok()) {
+    services.metrics().IncrementCounter("commands.registered");
+  }
+
+  status = services.command_registry().Register(
+      {"TTL", CmdFlags::kRead | CmdFlags::kFast, CommandSource::kBuiltin, "",
+       [this, services_ptr](const CmdRegistration& registration) {
+         return std::make_unique<TtlCmd>(registration, services_ptr,
+                                         &key_service_, false);
+       }});
+  if (status.ok()) {
+    services.metrics().IncrementCounter("commands.registered");
+  }
+
+  status = services.command_registry().Register(
+      {"PTTL", CmdFlags::kRead | CmdFlags::kFast, CommandSource::kBuiltin, "",
+       [this, services_ptr](const CmdRegistration& registration) {
+         return std::make_unique<TtlCmd>(registration, services_ptr,
+                                         &key_service_, true);
+       }});
+  if (status.ok()) {
+    services.metrics().IncrementCounter("commands.registered");
+  }
+
+  status = services.command_registry().Register(
+      {"PERSIST", CmdFlags::kWrite | CmdFlags::kFast,
+       CommandSource::kBuiltin, "",
+       [this, services_ptr](const CmdRegistration& registration) {
+         return std::make_unique<PersistCmd>(registration, services_ptr,
+                                             &key_service_);
        }});
   if (status.ok()) {
     services.metrics().IncrementCounter("commands.registered");

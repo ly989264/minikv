@@ -45,7 +45,7 @@ class HashModule : public Module,
 
  private:
   rocksdb::Status EnsureReady() const;
- rocksdb::Status NotifyObservers(const HashMutation& mutation,
+  rocksdb::Status NotifyObservers(const HashMutation& mutation,
                                   ModuleWriteBatch* write_batch) const;
 
   ModuleServices* services_ = nullptr;

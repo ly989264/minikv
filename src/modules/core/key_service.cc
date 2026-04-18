@@ -57,6 +57,9 @@ rocksdb::Status InvalidMetadataStatus() {
 
 }  // namespace
 
+DefaultCoreKeyService::DefaultCoreKeyService(TimeSource time_source)
+    : time_source_(std::move(time_source)) {}
+
 rocksdb::Status DefaultCoreKeyService::Lookup(ModuleSnapshot* snapshot,
                                               const std::string& key,
                                               KeyLookup* lookup) const {
@@ -85,9 +88,16 @@ rocksdb::Status DefaultCoreKeyService::Lookup(ModuleSnapshot* snapshot,
   }
 
   lookup->found = true;
-  lookup->expired =
-      IsExpiredAt(lookup->metadata.expire_at_ms, CurrentTimeMs());
-  lookup->exists = !lookup->expired;
+  if (IsLogicalDeleteExpireAt(lookup->metadata.expire_at_ms)) {
+    lookup->state = KeyLifecycleState::kTombstone;
+  } else if (IsExpiredAt(lookup->metadata.expire_at_ms, CurrentTimeMs())) {
+    lookup->state = KeyLifecycleState::kExpired;
+  } else {
+    lookup->state = KeyLifecycleState::kLive;
+  }
+  lookup->expired = lookup->state == KeyLifecycleState::kExpired ||
+                    lookup->state == KeyLifecycleState::kTombstone;
+  lookup->exists = lookup->state == KeyLifecycleState::kLive;
   return rocksdb::Status::OK();
 }
 
@@ -97,11 +107,46 @@ KeyMetadata DefaultCoreKeyService::MakeMetadata(ObjectType type,
   KeyMetadata metadata;
   metadata.type = type;
   metadata.encoding = encoding;
-  metadata.version =
-      (lookup.found && lookup.expired) ? lookup.metadata.version + 1 : 1;
+  metadata.version = (lookup.found && lookup.state != KeyLifecycleState::kLive)
+                         ? lookup.metadata.version + 1
+                         : 1;
   metadata.size = 0;
   metadata.expire_at_ms = 0;
   return metadata;
+}
+
+KeyMetadata DefaultCoreKeyService::MakeTombstoneMetadata(
+    const KeyLookup& lookup) const {
+  KeyMetadata metadata = lookup.metadata;
+  metadata.expire_at_ms = kLogicalDeleteExpireAtMs;
+  return metadata;
+}
+
+int64_t DefaultCoreKeyService::GetRemainingTtlMs(
+    const KeyLookup& lookup) const {
+  if (lookup.state != KeyLifecycleState::kLive) {
+    return -2;
+  }
+  if (lookup.metadata.expire_at_ms == 0) {
+    return -1;
+  }
+
+  const uint64_t now_ms = CurrentTimeMs();
+  if (lookup.metadata.expire_at_ms <= now_ms) {
+    return -2;
+  }
+  const uint64_t remaining_ms = lookup.metadata.expire_at_ms - now_ms;
+  if (remaining_ms > static_cast<uint64_t>(INT64_MAX)) {
+    return INT64_MAX;
+  }
+  return static_cast<int64_t>(remaining_ms);
+}
+
+uint64_t DefaultCoreKeyService::CurrentTimeMs() const {
+  if (time_source_) {
+    return time_source_();
+  }
+  return SystemCurrentTimeMs();
 }
 
 rocksdb::Status DefaultCoreKeyService::PutMetadata(
@@ -173,7 +218,11 @@ bool DefaultCoreKeyService::DecodeMetadataValue(const rocksdb::Slice& value,
   return true;
 }
 
-uint64_t DefaultCoreKeyService::CurrentTimeMs() {
+bool DefaultCoreKeyService::IsLogicalDeleteExpireAt(uint64_t expire_at_ms) {
+  return expire_at_ms == kLogicalDeleteExpireAtMs;
+}
+
+uint64_t DefaultCoreKeyService::SystemCurrentTimeMs() {
   return static_cast<uint64_t>(
       std::chrono::duration_cast<std::chrono::milliseconds>(
           std::chrono::system_clock::now().time_since_epoch())

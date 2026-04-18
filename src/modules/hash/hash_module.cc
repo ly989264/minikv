@@ -38,6 +38,13 @@ KeyMetadata BuildHashMetadata(const CoreKeyService* key_service,
   return metadata;
 }
 
+KeyMetadata BuildHashTombstoneMetadata(const CoreKeyService* key_service,
+                                       const KeyLookup& lookup) {
+  KeyMetadata metadata = key_service->MakeTombstoneMetadata(lookup);
+  metadata.size = 0;
+  return metadata;
+}
+
 class HSetCmd : public Cmd {
  public:
   HSetCmd(const CmdRegistration& registration, HashModule* module)
@@ -433,8 +440,8 @@ rocksdb::Status HashModule::DeleteFields(const std::string& key,
 
   KeyMetadata after = before;
   if (removed >= before.size) {
-    after.size = 0;
-    status = key_service_->DeleteMetadata(write_batch.get(), key);
+    after = BuildHashTombstoneMetadata(key_service_, lookup);
+    status = key_service_->PutMetadata(write_batch.get(), key, after);
   } else {
     after.size -= removed;
     status = key_service_->PutMetadata(write_batch.get(), key, after);
@@ -513,7 +520,8 @@ rocksdb::Status HashModule::DeleteWholeKey(ModuleSnapshot* snapshot,
       return status;
     }
   }
-  status = key_service_->DeleteMetadata(write_batch, key);
+  KeyMetadata after = BuildHashTombstoneMetadata(key_service_, lookup);
+  status = key_service_->PutMetadata(write_batch, key, after);
   if (!status.ok()) {
     return status;
   }
@@ -523,8 +531,7 @@ rocksdb::Status HashModule::DeleteWholeKey(ModuleSnapshot* snapshot,
   mutation.key = key;
   mutation.deleted_fields = removed_fields;
   mutation.before = before;
-  mutation.after = before;
-  mutation.after.size = 0;
+  mutation.after = after;
   mutation.existed_before = true;
   mutation.exists_after = false;
   return NotifyObservers(mutation, write_batch);
