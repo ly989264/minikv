@@ -9,6 +9,7 @@
 #include "kernel/snapshot.h"
 #include "kernel/storage_engine.h"
 #include "kernel/write_context.h"
+#include "modules/core/key_service.h"
 #include "rocksdb/db.h"
 #include "modules/hash/hash_types.h"
 
@@ -36,12 +37,15 @@ class SnapshotTest : public ::testing::Test {
 
   void SeedHash(uint64_t size, const std::vector<minikv::FieldValue>& values) {
     minikv::KeyMetadata metadata;
+    metadata.type = minikv::ObjectType::kHash;
+    metadata.encoding = minikv::ObjectEncoding::kHashPlain;
     metadata.size = size;
     minikv::WriteContext write_context(storage_engine_.get());
     ASSERT_TRUE(write_context
                     .Put(minikv::StorageColumnFamily::kMeta,
                          minikv::KeyCodec::EncodeMetaKey("user:1"),
-                         minikv::KeyCodec::EncodeMetaValue(metadata))
+                         minikv::DefaultCoreKeyService::EncodeMetadataValue(
+                             metadata))
                     .ok());
     for (const auto& value : values) {
       ASSERT_TRUE(write_context
@@ -72,7 +76,8 @@ TEST_F(SnapshotTest, SnapshotKeepsMetaAndHashReadsOnSameView) {
                         minikv::KeyCodec::EncodeMetaKey("user:1"), &raw_meta)
                   .ok());
   minikv::KeyMetadata first_metadata;
-  ASSERT_TRUE(minikv::KeyCodec::DecodeMetaValue(raw_meta, &first_metadata));
+  ASSERT_TRUE(minikv::DefaultCoreKeyService::DecodeMetadataValue(
+      raw_meta, &first_metadata));
   EXPECT_EQ(first_metadata.size, 1U);
 
   std::vector<minikv::FieldValue> first_values;
@@ -105,7 +110,8 @@ TEST_F(SnapshotTest, SnapshotKeepsMetaAndHashReadsOnSameView) {
                         minikv::KeyCodec::EncodeMetaKey("user:1"), &raw_meta)
                   .ok());
   minikv::KeyMetadata second_metadata;
-  ASSERT_TRUE(minikv::KeyCodec::DecodeMetaValue(raw_meta, &second_metadata));
+  ASSERT_TRUE(minikv::DefaultCoreKeyService::DecodeMetadataValue(
+      raw_meta, &second_metadata));
   EXPECT_EQ(second_metadata.size, 2U);
 
   std::vector<std::string> second_fields;

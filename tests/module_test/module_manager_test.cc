@@ -157,16 +157,23 @@ TEST(ModuleManagerTest, BuiltinModulesLoadIntoUnifiedRegistry) {
   ASSERT_TRUE(manager.Initialize().ok());
 
   const minikv::CmdRegistration* ping = manager.command_registry().Find("PING");
+  const minikv::CmdRegistration* type = manager.command_registry().Find("TYPE");
+  const minikv::CmdRegistration* exists =
+      manager.command_registry().Find("EXISTS");
   const minikv::CmdRegistration* hset = manager.command_registry().Find("HSET");
   const minikv::CmdRegistration* hgetall =
       manager.command_registry().Find("HGETALL");
   const minikv::CmdRegistration* hdel = manager.command_registry().Find("HDEL");
 
   ASSERT_NE(ping, nullptr);
+  ASSERT_NE(type, nullptr);
+  ASSERT_NE(exists, nullptr);
   ASSERT_NE(hset, nullptr);
   ASSERT_NE(hgetall, nullptr);
   ASSERT_NE(hdel, nullptr);
   EXPECT_EQ(ping->owner_module, "core");
+  EXPECT_EQ(type->owner_module, "core");
+  EXPECT_EQ(exists->owner_module, "core");
   EXPECT_EQ(hset->owner_module, "hash");
   EXPECT_EQ(hgetall->owner_module, "hash");
   EXPECT_EQ(hdel->owner_module, "hash");

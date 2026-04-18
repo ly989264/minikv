@@ -11,6 +11,7 @@
 #include "module/module.h"
 #include "module/module_manager.h"
 #include "module/module_services.h"
+#include "modules/core/core_module.h"
 #include "modules/hash/hash_indexing_bridge.h"
 #include "modules/hash/hash_module.h"
 #include "modules/hash/hash_observer.h"
@@ -107,6 +108,7 @@ class HashObserverTest : public ::testing::Test {
     hash_module_ = hash.get();
 
     std::vector<std::unique_ptr<minikv::Module>> modules;
+    modules.push_back(std::make_unique<minikv::CoreModule>());
     modules.push_back(std::move(lookup));
     modules.push_back(std::move(hash));
 

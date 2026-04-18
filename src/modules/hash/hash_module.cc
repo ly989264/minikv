@@ -7,20 +7,35 @@
 #include "codec/key_codec.h"
 #include "command/cmd.h"
 #include "module/module_services.h"
+#include "modules/core/key_service.h"
 #include "modules/hash/hash_observer.h"
 
 namespace minikv {
 
 namespace {
 
-rocksdb::Status DecodeHashMetadata(const std::string& key,
-                                   const std::string& raw_meta,
-                                   KeyMetadata* metadata) {
-  if (!KeyCodec::DecodeMetaValue(raw_meta, metadata) ||
-      metadata->type != ValueType::kHash) {
+rocksdb::Status RequireHashEncoding(const KeyLookup& lookup) {
+  if (!lookup.exists) {
+    return rocksdb::Status::OK();
+  }
+  if (lookup.metadata.type != ObjectType::kHash ||
+      lookup.metadata.encoding != ObjectEncoding::kHashPlain) {
     return rocksdb::Status::InvalidArgument("key type mismatch");
   }
   return rocksdb::Status::OK();
+}
+
+KeyMetadata BuildHashMetadata(const CoreKeyService* key_service,
+                              const KeyLookup& lookup) {
+  if (lookup.exists) {
+    return lookup.metadata;
+  }
+
+  KeyMetadata metadata =
+      key_service->MakeMetadata(ObjectType::kHash, ObjectEncoding::kHashPlain,
+                                lookup);
+  metadata.size = 0;
+  return metadata;
 }
 
 class HSetCmd : public Cmd {
@@ -49,8 +64,7 @@ class HSetCmd : public Cmd {
           rocksdb::Status::InvalidArgument("hash module is unavailable"));
     }
     bool inserted = false;
-    rocksdb::Status status =
-        module_->PutField(key_, field_, value_, &inserted);
+    rocksdb::Status status = module_->PutField(key_, field_, value_, &inserted);
     if (!status.ok()) {
       return MakeStatus(std::move(status));
     }
@@ -117,7 +131,8 @@ class HDelCmd : public Cmd {
       return rocksdb::Status::InvalidArgument("missing key");
     }
     if (input.args.empty()) {
-      return rocksdb::Status::InvalidArgument("HDEL requires at least one field");
+      return rocksdb::Status::InvalidArgument(
+          "HDEL requires at least one field");
     }
     key_ = input.key;
     fields_ = input.args;
@@ -131,8 +146,7 @@ class HDelCmd : public Cmd {
           rocksdb::Status::InvalidArgument("hash module is unavailable"));
     }
     uint64_t deleted = 0;
-    rocksdb::Status status =
-        module_->DeleteFields(key_, fields_, &deleted);
+    rocksdb::Status status = module_->DeleteFields(key_, fields_, &deleted);
     if (!status.ok()) {
       return MakeStatus(std::move(status));
     }
@@ -191,6 +205,12 @@ rocksdb::Status HashModule::OnLoad(ModuleServices& services) {
 }
 
 rocksdb::Status HashModule::OnStart(ModuleServices& services) {
+  key_service_ = services.exports().Find<CoreKeyService>(
+      kCoreKeyServiceQualifiedExportName);
+  if (key_service_ == nullptr) {
+    return rocksdb::Status::InvalidArgument("core key service is unavailable");
+  }
+
   started_ = true;
   services.metrics().SetCounter("worker_count",
                                 services.scheduler().worker_count());
@@ -200,12 +220,14 @@ rocksdb::Status HashModule::OnStart(ModuleServices& services) {
 void HashModule::OnStop(ModuleServices& /*services*/) {
   observers_.clear();
   started_ = false;
+  key_service_ = nullptr;
   services_ = nullptr;
 }
 
 rocksdb::Status HashModule::AddObserver(HashObserver* observer) {
   if (services_ == nullptr) {
-    return rocksdb::Status::InvalidArgument("hash indexing bridge is unavailable");
+    return rocksdb::Status::InvalidArgument(
+        "hash indexing bridge is unavailable");
   }
   if (observer == nullptr) {
     return rocksdb::Status::InvalidArgument("hash observer is required");
@@ -220,7 +242,8 @@ rocksdb::Status HashModule::AddObserver(HashObserver* observer) {
 
 rocksdb::Status HashModule::RemoveObserver(HashObserver* observer) {
   if (services_ == nullptr) {
-    return rocksdb::Status::InvalidArgument("hash indexing bridge is unavailable");
+    return rocksdb::Status::InvalidArgument(
+        "hash indexing bridge is unavailable");
   }
   if (observer == nullptr) {
     return rocksdb::Status::InvalidArgument("hash observer is required");
@@ -247,29 +270,18 @@ rocksdb::Status HashModule::PutField(const std::string& key,
   }
 
   std::unique_ptr<ModuleSnapshot> snapshot = services_->snapshot().Create();
-  std::string raw_meta;
-  KeyMetadata before;
-  bool existed_before = false;
-  rocksdb::Status status =
-      snapshot->Get(StorageColumnFamily::kMeta, KeyCodec::EncodeMetaKey(key),
-                    &raw_meta);
-  if (status.ok()) {
-    existed_before = true;
-    status = DecodeHashMetadata(key, raw_meta, &before);
-    if (!status.ok()) {
-      return status;
-    }
-  } else if (!status.IsNotFound()) {
+  KeyLookup lookup;
+  rocksdb::Status status = key_service_->Lookup(snapshot.get(), key, &lookup);
+  if (!status.ok()) {
+    return status;
+  }
+  status = RequireHashEncoding(lookup);
+  if (!status.ok()) {
     return status;
   }
 
-  if (!existed_before) {
-    before.type = ValueType::kHash;
-    before.encoding = ValueEncoding::kHashPlain;
-    before.version = 1;
-    before.size = 0;
-    before.expire_at_ms = 0;
-  }
+  const bool existed_before = lookup.exists;
+  KeyMetadata before = BuildHashMetadata(key_service_, lookup);
 
   const std::string data_key =
       KeyCodec::EncodeHashDataKey(key, before.version, field);
@@ -289,9 +301,7 @@ rocksdb::Status HashModule::PutField(const std::string& key,
 
   std::unique_ptr<ModuleWriteBatch> write_batch =
       services_->storage().CreateWriteBatch();
-  status = write_batch->Put(StorageColumnFamily::kMeta,
-                            KeyCodec::EncodeMetaKey(key),
-                            KeyCodec::EncodeMetaValue(after));
+  status = key_service_->PutMetadata(write_batch.get(), key, after);
   if (!status.ok()) {
     return status;
   }
@@ -330,25 +340,21 @@ rocksdb::Status HashModule::ReadAll(const std::string& key,
   }
 
   std::unique_ptr<ModuleSnapshot> snapshot = services_->snapshot().Create();
-  std::string raw_meta;
-  rocksdb::Status status =
-      snapshot->Get(StorageColumnFamily::kMeta, KeyCodec::EncodeMetaKey(key),
-                    &raw_meta);
-  if (status.IsNotFound()) {
-    return rocksdb::Status::OK();
-  }
+  KeyLookup lookup;
+  rocksdb::Status status = key_service_->Lookup(snapshot.get(), key, &lookup);
   if (!status.ok()) {
     return status;
   }
-
-  KeyMetadata metadata;
-  status = DecodeHashMetadata(key, raw_meta, &metadata);
+  if (!lookup.exists) {
+    return rocksdb::Status::OK();
+  }
+  status = RequireHashEncoding(lookup);
   if (!status.ok()) {
     return status;
   }
 
   const std::string prefix =
-      KeyCodec::EncodeHashDataPrefix(key, metadata.version);
+      KeyCodec::EncodeHashDataPrefix(key, lookup.metadata.version);
   return snapshot->ScanPrefix(
       StorageColumnFamily::kHash, prefix,
       [out, &prefix](const rocksdb::Slice& encoded_key,
@@ -375,22 +381,20 @@ rocksdb::Status HashModule::DeleteFields(const std::string& key,
   }
 
   std::unique_ptr<ModuleSnapshot> snapshot = services_->snapshot().Create();
-  std::string raw_meta;
-  KeyMetadata before;
-  rocksdb::Status status =
-      snapshot->Get(StorageColumnFamily::kMeta, KeyCodec::EncodeMetaKey(key),
-                    &raw_meta);
-  if (status.IsNotFound()) {
-    return rocksdb::Status::OK();
-  }
+  KeyLookup lookup;
+  rocksdb::Status status = key_service_->Lookup(snapshot.get(), key, &lookup);
   if (!status.ok()) {
     return status;
   }
-  status = DecodeHashMetadata(key, raw_meta, &before);
+  if (!lookup.exists) {
+    return rocksdb::Status::OK();
+  }
+  status = RequireHashEncoding(lookup);
   if (!status.ok()) {
     return status;
   }
 
+  KeyMetadata before = lookup.metadata;
   uint64_t removed = 0;
   std::unique_ptr<ModuleWriteBatch> write_batch =
       services_->storage().CreateWriteBatch();
@@ -419,14 +423,10 @@ rocksdb::Status HashModule::DeleteFields(const std::string& key,
   KeyMetadata after = before;
   if (removed >= before.size) {
     after.size = 0;
-    status =
-        write_batch->Delete(StorageColumnFamily::kMeta,
-                            KeyCodec::EncodeMetaKey(key));
+    status = key_service_->DeleteMetadata(write_batch.get(), key);
   } else {
     after.size -= removed;
-    status = write_batch->Put(StorageColumnFamily::kMeta,
-                              KeyCodec::EncodeMetaKey(key),
-                              KeyCodec::EncodeMetaValue(after));
+    status = key_service_->PutMetadata(write_batch.get(), key, after);
   }
   if (!status.ok()) {
     return status;
@@ -453,7 +453,7 @@ rocksdb::Status HashModule::DeleteFields(const std::string& key,
 }
 
 rocksdb::Status HashModule::EnsureReady() const {
-  if (services_ == nullptr || !started_) {
+  if (services_ == nullptr || key_service_ == nullptr || !started_) {
     return rocksdb::Status::InvalidArgument("hash module is unavailable");
   }
   return rocksdb::Status::OK();

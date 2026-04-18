@@ -222,6 +222,18 @@ TEST_F(MiniKVServerTest, PingAndBasicHashLifecycle) {
   hset_result = ReadRespValue(fd);
   ASSERT_EQ(hset_result.integer, 0);
 
+  const std::string type_existing = EncodeCommand({"TYPE", "user:1"});
+  WriteAll(fd, type_existing);
+  RespValue type = ReadRespValue(fd);
+  ASSERT_EQ(type.type, RespValue::Type::kBulkString);
+  ASSERT_EQ(type.text, "hash");
+
+  const std::string exists_existing = EncodeCommand({"EXISTS", "user:1"});
+  WriteAll(fd, exists_existing);
+  RespValue exists = ReadRespValue(fd);
+  ASSERT_EQ(exists.type, RespValue::Type::kInteger);
+  ASSERT_EQ(exists.integer, 1);
+
   const std::string hgetall = EncodeCommand({"HGETALL", "user:1"});
   WriteAll(fd, hgetall);
   RespValue all = ReadRespValue(fd);
@@ -240,6 +252,28 @@ TEST_F(MiniKVServerTest, PingAndBasicHashLifecycle) {
   all = ReadRespValue(fd);
   ASSERT_EQ(all.type, RespValue::Type::kArray);
   ASSERT_TRUE(all.array.empty());
+
+  WriteAll(fd, type_existing);
+  type = ReadRespValue(fd);
+  ASSERT_EQ(type.type, RespValue::Type::kBulkString);
+  ASSERT_EQ(type.text, "none");
+
+  WriteAll(fd, exists_existing);
+  exists = ReadRespValue(fd);
+  ASSERT_EQ(exists.type, RespValue::Type::kInteger);
+  ASSERT_EQ(exists.integer, 0);
+
+  const std::string type_missing = EncodeCommand({"TYPE", "missing"});
+  WriteAll(fd, type_missing);
+  type = ReadRespValue(fd);
+  ASSERT_EQ(type.type, RespValue::Type::kBulkString);
+  ASSERT_EQ(type.text, "none");
+
+  const std::string exists_missing = EncodeCommand({"EXISTS", "missing"});
+  WriteAll(fd, exists_missing);
+  exists = ReadRespValue(fd);
+  ASSERT_EQ(exists.type, RespValue::Type::kInteger);
+  ASSERT_EQ(exists.integer, 0);
 
   close(fd);
 }

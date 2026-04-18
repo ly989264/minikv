@@ -3,7 +3,7 @@
 #include <string>
 #include <vector>
 
-#include "codec/key_codec.h"
+#include "modules/core/key_service.h"
 #include "modules/hash/hash_types.h"
 #include "rocksdb/status.h"
 

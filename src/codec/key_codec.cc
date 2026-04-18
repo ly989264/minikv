@@ -63,35 +63,6 @@ std::string KeyCodec::EncodeHashDataKey(const std::string& user_key,
   return out;
 }
 
-std::string KeyCodec::EncodeMetaValue(const KeyMetadata& metadata) {
-  std::string out;
-  out.push_back(static_cast<char>(metadata.type));
-  out.push_back(static_cast<char>(metadata.encoding));
-  AppendUint64(&out, metadata.version);
-  AppendUint64(&out, metadata.size);
-  AppendUint64(&out, metadata.expire_at_ms);
-  return out;
-}
-
-bool KeyCodec::DecodeMetaValue(const rocksdb::Slice& value,
-                               KeyMetadata* metadata) {
-  if (value.size() != 26) {
-    return false;
-  }
-  const auto type = static_cast<uint8_t>(value.data()[0]);
-  const auto encoding = static_cast<uint8_t>(value.data()[1]);
-  if (type != static_cast<uint8_t>(ValueType::kHash) ||
-      encoding != static_cast<uint8_t>(ValueEncoding::kHashPlain)) {
-    return false;
-  }
-  metadata->type = static_cast<ValueType>(type);
-  metadata->encoding = static_cast<ValueEncoding>(encoding);
-  metadata->version = DecodeUint64(value.data() + 2);
-  metadata->size = DecodeUint64(value.data() + 10);
-  metadata->expire_at_ms = DecodeUint64(value.data() + 18);
-  return true;
-}
-
 bool KeyCodec::StartsWith(const rocksdb::Slice& value,
                           const rocksdb::Slice& prefix) {
   return value.size() >= prefix.size() &&

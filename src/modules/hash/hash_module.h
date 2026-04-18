@@ -10,6 +10,7 @@
 
 namespace minikv {
 
+class CoreKeyService;
 class ModuleServices;
 class ModuleWriteBatch;
 struct HashMutation;
@@ -34,10 +35,11 @@ class HashModule : public Module, public HashIndexingBridge {
 
  private:
   rocksdb::Status EnsureReady() const;
-  rocksdb::Status NotifyObservers(const HashMutation& mutation,
+ rocksdb::Status NotifyObservers(const HashMutation& mutation,
                                   ModuleWriteBatch* write_batch) const;
 
   ModuleServices* services_ = nullptr;
+  const CoreKeyService* key_service_ = nullptr;
   bool started_ = false;
   std::vector<HashObserver*> observers_;
 };

@@ -66,6 +66,7 @@ set(MINIKV_INTERNAL_HEADERS
   src/module/module_manager.h
   src/module/module_services.h
   src/modules/core/core_module.h
+  src/modules/core/key_service.h
   src/modules/hash/hash_indexing_bridge.h
   src/modules/hash/hash_module.h
   src/modules/hash/hash_observer.h
@@ -89,6 +90,7 @@ set(MINIKV_SOURCES
   src/module/background_executor.cc
   src/module/module_services.cc
   src/modules/core/core_module.cc
+  src/modules/core/key_service.cc
   src/modules/hash/hash_module.cc
   src/network/network_server.cc
   src/network/resp_parser.cc

@@ -41,6 +41,12 @@ void ExpectBulkStringArray(const minikv::ReplyNode& reply,
   }
 }
 
+void ExpectBulkString(const minikv::ReplyNode& reply,
+                      const std::string& value) {
+  ASSERT_TRUE(reply.IsBulkString());
+  EXPECT_EQ(reply.string(), value);
+}
+
 class TestCmd : public minikv::Cmd {
  public:
   TestCmd()
@@ -158,6 +164,18 @@ TEST_F(ModuleRuntimeTest, FindsRegisteredCommandsByName) {
   EXPECT_EQ(ping->owner_module, "core");
   ExpectFlags(ping->flags, true, false, true, false);
 
+  const minikv::CmdRegistration* type = registry().Find("TYPE");
+  ASSERT_NE(type, nullptr);
+  EXPECT_EQ(type->name, "TYPE");
+  EXPECT_EQ(type->owner_module, "core");
+  ExpectFlags(type->flags, true, false, true, false);
+
+  const minikv::CmdRegistration* exists = registry().Find("EXISTS");
+  ASSERT_NE(exists, nullptr);
+  EXPECT_EQ(exists->name, "EXISTS");
+  EXPECT_EQ(exists->owner_module, "core");
+  ExpectFlags(exists->flags, true, false, true, false);
+
   const minikv::CmdRegistration* hset = registry().Find("HSET");
   ASSERT_NE(hset, nullptr);
   EXPECT_EQ(hset->name, "HSET");
@@ -189,6 +207,21 @@ TEST_F(ModuleRuntimeTest, CreatesCommandsFromRespParts) {
   EXPECT_EQ(ping->Name(), "PING");
   EXPECT_TRUE(ping->RouteKey().empty());
   ExpectFlags(ping->Flags(), true, false, true, false);
+
+  std::unique_ptr<minikv::Cmd> type;
+  ASSERT_TRUE(minikv::CreateCmd(registry(), {"TYPE", "user:1"}, &type).ok());
+  ASSERT_NE(type, nullptr);
+  EXPECT_EQ(type->Name(), "TYPE");
+  EXPECT_EQ(type->RouteKey(), "user:1");
+  ExpectFlags(type->Flags(), true, false, true, false);
+
+  std::unique_ptr<minikv::Cmd> exists;
+  ASSERT_TRUE(
+      minikv::CreateCmd(registry(), {"EXISTS", "user:1"}, &exists).ok());
+  ASSERT_NE(exists, nullptr);
+  EXPECT_EQ(exists->Name(), "EXISTS");
+  EXPECT_EQ(exists->RouteKey(), "user:1");
+  ExpectFlags(exists->Flags(), true, false, true, false);
 
   std::unique_ptr<minikv::Cmd> hset;
   ASSERT_TRUE(
@@ -242,6 +275,25 @@ TEST_F(ModuleRuntimeTest, RejectsBadArgumentsAndNullOutputs) {
   status = minikv::CreateCmd(registry(), {"PING", "extra"}, &cmd);
   ASSERT_TRUE(status.IsInvalidArgument());
   EXPECT_NE(status.ToString().find("PING takes no arguments"),
+            std::string::npos);
+
+  status = minikv::CreateCmd(registry(), {"TYPE"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("missing key"), std::string::npos);
+
+  status = minikv::CreateCmd(registry(), {"TYPE", "user:1", "extra"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("TYPE takes no extra arguments"),
+            std::string::npos);
+
+  status = minikv::CreateCmd(registry(), {"EXISTS"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("missing key"), std::string::npos);
+
+  status =
+      minikv::CreateCmd(registry(), {"EXISTS", "user:1", "extra"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("EXISTS takes no extra arguments"),
             std::string::npos);
 }
 
@@ -312,6 +364,24 @@ TEST_F(ModuleRuntimeTest, PingExecuteReturnsPong) {
   EXPECT_EQ(response.reply.string(), "PONG");
 }
 
+TEST_F(ModuleRuntimeTest, TypeAndExistsExecuteAgainstEngine) {
+  ASSERT_TRUE(hash_module_->PutField("user:type", "name", "alice", nullptr).ok());
+
+  std::unique_ptr<minikv::Cmd> type = CreateFromParts({"TYPE", "user:type"});
+  ASSERT_NE(type, nullptr);
+  minikv::CommandResponse response = type->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ExpectBulkString(response.reply, "hash");
+
+  std::unique_ptr<minikv::Cmd> exists =
+      CreateFromParts({"EXISTS", "user:type"});
+  ASSERT_NE(exists, nullptr);
+  response = exists->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsInteger());
+  EXPECT_EQ(response.reply.integer(), 1);
+}
+
 TEST_F(ModuleRuntimeTest, HSetAndHGetAllExecuteAgainstEngine) {
   std::unique_ptr<minikv::Cmd> set_insert =
       CreateFromParts({"HSET", "user:2", "name", "alice"});
@@ -366,6 +436,22 @@ TEST_F(ModuleRuntimeTest, HashCommandsOnMissingKeyReturnEmptySuccess) {
       CreateFromParts({"HDEL", "missing", "field"});
   ASSERT_NE(del, nullptr);
   response = del->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsInteger());
+  EXPECT_EQ(response.reply.integer(), 0);
+}
+
+TEST_F(ModuleRuntimeTest, TypeAndExistsOnMissingKeyReturnNoneAndZero) {
+  std::unique_ptr<minikv::Cmd> type = CreateFromParts({"TYPE", "missing"});
+  ASSERT_NE(type, nullptr);
+  minikv::CommandResponse response = type->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ExpectBulkString(response.reply, "none");
+
+  std::unique_ptr<minikv::Cmd> exists =
+      CreateFromParts({"EXISTS", "missing"});
+  ASSERT_NE(exists, nullptr);
+  response = exists->Execute();
   ASSERT_TRUE(response.status.ok());
   ASSERT_TRUE(response.reply.IsInteger());
   EXPECT_EQ(response.reply.integer(), 0);
