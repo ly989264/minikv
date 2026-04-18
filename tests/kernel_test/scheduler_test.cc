@@ -167,6 +167,13 @@ bool WaitFor(Tracker* tracker, const std::function<bool()>& predicate,
   return tracker->cv.wait_for(lock, timeout, predicate);
 }
 
+void ExpectFutureReady(std::future<void>* future,
+                       std::chrono::milliseconds timeout =
+                           std::chrono::seconds(2)) {
+  ASSERT_NE(future, nullptr);
+  ASSERT_EQ(future->wait_for(timeout), std::future_status::ready);
+}
+
 TEST(SchedulerTest, SameKeyTasksDoNotExecuteInParallel) {
   minikv::Scheduler scheduler(2, 4);
   Tracker tracker;
@@ -216,8 +223,10 @@ TEST(SchedulerTest, SameKeyTasksDoNotExecuteInParallel) {
   }
   tracker.cv.notify_all();
 
-  first_done.get_future().wait();
-  second_done.get_future().wait();
+  std::future<void> first_done_future = first_done.get_future();
+  std::future<void> second_done_future = second_done.get_future();
+  ExpectFutureReady(&first_done_future);
+  ExpectFutureReady(&second_done_future);
 }
 
 TEST(SchedulerTest, SameKeyTasksSerializeEvenWhenMultipleWorkersPickThemUp) {
@@ -275,7 +284,7 @@ TEST(SchedulerTest, SameKeyTasksSerializeEvenWhenMultipleWorkersPickThemUp) {
                       [&] { return tracker.completed_count == gates.size(); },
                       std::chrono::seconds(1)));
   for (auto& future : done_futures) {
-    future.wait();
+    ExpectFutureReady(&future);
   }
 
   std::set<std::thread::id> unique_threads;
@@ -328,8 +337,10 @@ TEST(SchedulerTest, DifferentKeysCanExecuteInParallel) {
   }
   tracker.cv.notify_all();
 
-  first_done.get_future().wait();
-  second_done.get_future().wait();
+  std::future<void> first_done_future = first_done.get_future();
+  std::future<void> second_done_future = second_done.get_future();
+  ExpectFutureReady(&first_done_future);
+  ExpectFutureReady(&second_done_future);
 }
 
 TEST(SchedulerTest, NoKeyCommandsDoNotTakeKeyLock) {
@@ -372,8 +383,10 @@ TEST(SchedulerTest, NoKeyCommandsDoNotTakeKeyLock) {
   }
   tracker.cv.notify_all();
 
-  first_done.get_future().wait();
-  second_done.get_future().wait();
+  std::future<void> first_done_future = first_done.get_future();
+  std::future<void> second_done_future = second_done.get_future();
+  ExpectFutureReady(&first_done_future);
+  ExpectFutureReady(&second_done_future);
 }
 
 TEST(SchedulerTest, EmptyStringKeyStillTakesSingleKeyLock) {
@@ -395,7 +408,7 @@ TEST(SchedulerTest, EmptyStringKeyStillTakesSingleKeyLock) {
                             blocked_done.set_value();
                           })
                   .ok());
-  blocked_entered_future.wait();
+  ExpectFutureReady(&blocked_entered_future);
 
   ASSERT_TRUE(scheduler.Submit(
                           MakeQuickCmd(""),
@@ -414,7 +427,7 @@ TEST(SchedulerTest, EmptyStringKeyStillTakesSingleKeyLock) {
   }
   tracker.cv.notify_all();
 
-  blocked_done_future.wait();
+  ExpectFutureReady(&blocked_done_future);
   EXPECT_EQ(quick_done_future.wait_for(std::chrono::seconds(1)),
             std::future_status::ready);
 }
@@ -438,7 +451,7 @@ TEST(SchedulerTest, DifferentKeyQuickTaskCompletesWhileHotKeyIsBlocked) {
                             blocked_done.set_value();
                           })
                   .ok());
-  blocked_entered_future.wait();
+  ExpectFutureReady(&blocked_entered_future);
 
   ASSERT_TRUE(scheduler.Submit(
                           MakeQuickCmd("user:cold"),
@@ -456,7 +469,7 @@ TEST(SchedulerTest, DifferentKeyQuickTaskCompletesWhileHotKeyIsBlocked) {
     blocked_gate.release = true;
   }
   tracker.cv.notify_all();
-  blocked_done_future.wait();
+  ExpectFutureReady(&blocked_done_future);
 }
 
 TEST(SchedulerTest, SameKeyQuickTaskWaitsUntilBlockedTaskReleasesLock) {
@@ -478,7 +491,7 @@ TEST(SchedulerTest, SameKeyQuickTaskWaitsUntilBlockedTaskReleasesLock) {
                             blocked_done.set_value();
                           })
                   .ok());
-  blocked_entered_future.wait();
+  ExpectFutureReady(&blocked_entered_future);
 
   ASSERT_TRUE(scheduler.Submit(
                           MakeQuickCmd("user:locked"),
@@ -497,7 +510,7 @@ TEST(SchedulerTest, SameKeyQuickTaskWaitsUntilBlockedTaskReleasesLock) {
   }
   tracker.cv.notify_all();
 
-  blocked_done_future.wait();
+  ExpectFutureReady(&blocked_done_future);
   EXPECT_EQ(quick_done_future.wait_for(std::chrono::seconds(1)),
             std::future_status::ready);
 }
@@ -523,7 +536,7 @@ TEST(SchedulerTest,
                             blocked_done.set_value();
                           })
                   .ok());
-  blocked_entered_future.wait();
+  ExpectFutureReady(&blocked_entered_future);
 
   ASSERT_TRUE(scheduler.Submit(
                           MakeQuickCmd(
@@ -543,7 +556,7 @@ TEST(SchedulerTest,
   }
   tracker.cv.notify_all();
 
-  blocked_done_future.wait();
+  ExpectFutureReady(&blocked_done_future);
   EXPECT_EQ(quick_done_future.wait_for(std::chrono::seconds(1)),
             std::future_status::ready);
 }
@@ -569,7 +582,7 @@ TEST(SchedulerTest,
                             blocked_done.set_value();
                           })
                   .ok());
-  blocked_entered_future.wait();
+  ExpectFutureReady(&blocked_entered_future);
 
   ASSERT_TRUE(scheduler.Submit(
                           MakeQuickCmd(
@@ -589,7 +602,7 @@ TEST(SchedulerTest,
   }
   tracker.cv.notify_all();
 
-  blocked_done_future.wait();
+  ExpectFutureReady(&blocked_done_future);
   EXPECT_EQ(quick_done_future.wait_for(std::chrono::seconds(1)),
             std::future_status::ready);
 }
@@ -615,7 +628,7 @@ TEST(SchedulerTest,
                             blocked_done.set_value();
                           })
                   .ok());
-  blocked_entered_future.wait();
+  ExpectFutureReady(&blocked_entered_future);
 
   ASSERT_TRUE(scheduler.Submit(
                           MakeQuickCmd(
@@ -634,7 +647,7 @@ TEST(SchedulerTest,
     blocked_gate.release = true;
   }
   tracker.cv.notify_all();
-  blocked_done_future.wait();
+  ExpectFutureReady(&blocked_done_future);
 }
 
 TEST(SchedulerTest, MetricsSnapshotTracksBacklogRejectionsAndInflight) {
@@ -659,7 +672,7 @@ TEST(SchedulerTest, MetricsSnapshotTracksBacklogRejectionsAndInflight) {
                           })
                   .ok());
 
-  blocked_entered_future.wait();
+  ExpectFutureReady(&blocked_entered_future);
 
   minikv::MetricsSnapshot first = scheduler.GetMetricsSnapshot();
   ASSERT_EQ(first.worker_queue_depth.size(), 1U);
@@ -692,8 +705,8 @@ TEST(SchedulerTest, MetricsSnapshotTracksBacklogRejectionsAndInflight) {
     blocked_gate.release = true;
   }
   tracker.cv.notify_all();
-  blocked_done_future.wait();
-  queued_done_future.wait();
+  ExpectFutureReady(&blocked_done_future);
+  ExpectFutureReady(&queued_done_future);
 
   minikv::MetricsSnapshot third = scheduler.GetMetricsSnapshot();
   EXPECT_EQ(third.worker_inflight, 0U);

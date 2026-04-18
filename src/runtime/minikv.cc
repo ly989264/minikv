@@ -9,6 +9,7 @@
 #include "storage/engine/storage_engine.h"
 #include "core/core_module.h"
 #include "types/hash/hash_module.h"
+#include "types/set/set_module.h"
 
 namespace minikv {
 namespace {
@@ -17,6 +18,7 @@ std::vector<std::unique_ptr<Module>> CreateBuiltinModules() {
   std::vector<std::unique_ptr<Module>> modules;
   modules.push_back(std::make_unique<CoreModule>());
   modules.push_back(std::make_unique<HashModule>());
+  modules.push_back(std::make_unique<SetModule>());
   return modules;
 }
 

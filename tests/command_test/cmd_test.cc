@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <filesystem>
 #include <memory>
 #include <string>
@@ -13,6 +14,7 @@
 #include "runtime/module/module_manager.h"
 #include "core/core_module.h"
 #include "types/hash/hash_module.h"
+#include "types/set/set_module.h"
 #include "rocksdb/db.h"
 
 namespace {
@@ -41,10 +43,38 @@ void ExpectBulkStringArray(const minikv::ReplyNode& reply,
   }
 }
 
+void ExpectBulkStringArrayUnordered(const minikv::ReplyNode& reply,
+                                    const std::vector<std::string>& values) {
+  ASSERT_TRUE(reply.IsArray());
+  ASSERT_EQ(reply.array().size(), values.size());
+
+  std::vector<std::string> actual;
+  actual.reserve(reply.array().size());
+  for (const auto& node : reply.array()) {
+    ASSERT_TRUE(node.IsBulkString());
+    actual.push_back(node.string());
+  }
+
+  std::vector<std::string> actual_sorted = actual;
+  std::vector<std::string> expected_sorted = values;
+  std::sort(actual_sorted.begin(), actual_sorted.end());
+  std::sort(expected_sorted.begin(), expected_sorted.end());
+  EXPECT_EQ(actual_sorted, expected_sorted);
+}
+
 void ExpectBulkString(const minikv::ReplyNode& reply,
                       const std::string& value) {
   ASSERT_TRUE(reply.IsBulkString());
   EXPECT_EQ(reply.string(), value);
+}
+
+void ExpectMembersUnordered(const std::vector<std::string>& actual,
+                            const std::vector<std::string>& expected) {
+  std::vector<std::string> actual_sorted = actual;
+  std::vector<std::string> expected_sorted = expected;
+  std::sort(actual_sorted.begin(), actual_sorted.end());
+  std::sort(expected_sorted.begin(), expected_sorted.end());
+  EXPECT_EQ(actual_sorted, expected_sorted);
 }
 
 void ExpectLockPlan(const minikv::Cmd::LockPlan& plan,
@@ -137,6 +167,9 @@ class ModuleRuntimeTest : public ::testing::Test {
     auto hash_module = std::make_unique<minikv::HashModule>();
     hash_module_ = hash_module.get();
     modules.push_back(std::move(hash_module));
+    auto set_module = std::make_unique<minikv::SetModule>();
+    set_module_ = set_module.get();
+    modules.push_back(std::move(set_module));
 
     module_manager_ = std::make_unique<minikv::ModuleManager>(
         storage_engine_.get(), scheduler_.get(), std::move(modules));
@@ -171,6 +204,7 @@ class ModuleRuntimeTest : public ::testing::Test {
   std::unique_ptr<minikv::ModuleManager> module_manager_;
   std::unique_ptr<minikv::StorageEngine> storage_engine_;
   minikv::HashModule* hash_module_ = nullptr;
+  minikv::SetModule* set_module_ = nullptr;
 };
 
 TEST_F(ModuleRuntimeTest, FindsRegisteredCommandsByName) {
@@ -239,6 +273,48 @@ TEST_F(ModuleRuntimeTest, FindsRegisteredCommandsByName) {
   EXPECT_EQ(hdel->name, "HDEL");
   EXPECT_EQ(hdel->owner_module, "hash");
   ExpectFlags(hdel->flags, false, true, false, true);
+
+  const minikv::CmdRegistration* sadd = registry().Find("SADD");
+  ASSERT_NE(sadd, nullptr);
+  EXPECT_EQ(sadd->name, "SADD");
+  EXPECT_EQ(sadd->owner_module, "set");
+  ExpectFlags(sadd->flags, false, true, true, false);
+
+  const minikv::CmdRegistration* scard = registry().Find("SCARD");
+  ASSERT_NE(scard, nullptr);
+  EXPECT_EQ(scard->name, "SCARD");
+  EXPECT_EQ(scard->owner_module, "set");
+  ExpectFlags(scard->flags, true, false, true, false);
+
+  const minikv::CmdRegistration* smembers = registry().Find("SMEMBERS");
+  ASSERT_NE(smembers, nullptr);
+  EXPECT_EQ(smembers->name, "SMEMBERS");
+  EXPECT_EQ(smembers->owner_module, "set");
+  ExpectFlags(smembers->flags, true, false, false, true);
+
+  const minikv::CmdRegistration* sismember = registry().Find("SISMEMBER");
+  ASSERT_NE(sismember, nullptr);
+  EXPECT_EQ(sismember->name, "SISMEMBER");
+  EXPECT_EQ(sismember->owner_module, "set");
+  ExpectFlags(sismember->flags, true, false, true, false);
+
+  const minikv::CmdRegistration* spop = registry().Find("SPOP");
+  ASSERT_NE(spop, nullptr);
+  EXPECT_EQ(spop->name, "SPOP");
+  EXPECT_EQ(spop->owner_module, "set");
+  ExpectFlags(spop->flags, false, true, false, true);
+
+  const minikv::CmdRegistration* srandmember = registry().Find("SRANDMEMBER");
+  ASSERT_NE(srandmember, nullptr);
+  EXPECT_EQ(srandmember->name, "SRANDMEMBER");
+  EXPECT_EQ(srandmember->owner_module, "set");
+  ExpectFlags(srandmember->flags, true, false, false, true);
+
+  const minikv::CmdRegistration* srem = registry().Find("SREM");
+  ASSERT_NE(srem, nullptr);
+  EXPECT_EQ(srem->name, "SREM");
+  EXPECT_EQ(srem->owner_module, "set");
+  ExpectFlags(srem->flags, false, true, false, true);
 }
 
 TEST_F(ModuleRuntimeTest, ReturnsNullForUnknownRegistrations) {
@@ -324,6 +400,23 @@ TEST_F(ModuleRuntimeTest, CreatesCommandsFromRespParts) {
   ASSERT_TRUE(minikv::CreateCmd(registry(), {"hgetall", "user:1"}, &lower).ok());
   ASSERT_NE(lower, nullptr);
   EXPECT_EQ(lower->Name(), "HGETALL");
+
+  std::unique_ptr<minikv::Cmd> sadd;
+  ASSERT_TRUE(
+      minikv::CreateCmd(registry(), {"SADD", "set:1", "a", "b", "a"}, &sadd)
+          .ok());
+  ASSERT_NE(sadd, nullptr);
+  EXPECT_EQ(sadd->Name(), "SADD");
+  EXPECT_EQ(sadd->RouteKey(), "set:1");
+  ExpectLockPlan(sadd->lock_plan(), minikv::Cmd::LockPlan::Kind::kSingle,
+                 "set:1", {});
+  ExpectFlags(sadd->Flags(), false, true, true, false);
+
+  std::unique_ptr<minikv::Cmd> lower_set;
+  ASSERT_TRUE(
+      minikv::CreateCmd(registry(), {"srem", "set:1", "a"}, &lower_set).ok());
+  ASSERT_NE(lower_set, nullptr);
+  EXPECT_EQ(lower_set->Name(), "SREM");
 }
 
 TEST_F(ModuleRuntimeTest, RejectsBadArgumentsAndNullOutputs) {
@@ -358,6 +451,42 @@ TEST_F(ModuleRuntimeTest, RejectsBadArgumentsAndNullOutputs) {
   status = minikv::CreateCmd(registry(), {"HDEL", "user:1"}, &cmd);
   ASSERT_TRUE(status.IsInvalidArgument());
   EXPECT_NE(status.ToString().find("HDEL requires at least one field"),
+            std::string::npos);
+
+  status = minikv::CreateCmd(registry(), {"SADD", "set:1"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("SADD requires at least one member"),
+            std::string::npos);
+
+  status = minikv::CreateCmd(registry(), {"SCARD", "set:1", "extra"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("SCARD takes no extra arguments"),
+            std::string::npos);
+
+  status = minikv::CreateCmd(registry(), {"SMEMBERS", "set:1", "extra"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("SMEMBERS takes no extra arguments"),
+            std::string::npos);
+
+  status = minikv::CreateCmd(registry(), {"SISMEMBER", "set:1"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("SISMEMBER requires member"),
+            std::string::npos);
+
+  status = minikv::CreateCmd(registry(), {"SPOP", "set:1", "extra"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("SPOP takes no extra arguments"),
+            std::string::npos);
+
+  status =
+      minikv::CreateCmd(registry(), {"SRANDMEMBER", "set:1", "extra"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("SRANDMEMBER takes no extra arguments"),
+            std::string::npos);
+
+  status = minikv::CreateCmd(registry(), {"SREM", "set:1"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("SREM requires at least one member"),
             std::string::npos);
 
   status = minikv::CreateCmd(registry(), {"PING", "extra"}, &cmd);
@@ -659,6 +788,146 @@ TEST_F(ModuleRuntimeTest, HDelExecuteRemovesFields) {
   std::vector<minikv::FieldValue> values;
   ASSERT_TRUE(hash_module_->ReadAll("user:3", &values).ok());
   EXPECT_TRUE(values.empty());
+}
+
+TEST_F(ModuleRuntimeTest, SetCommandsExecuteAgainstEngine) {
+  std::unique_ptr<minikv::Cmd> sadd =
+      CreateFromParts({"SADD", "set:cmd", "a", "b", "a"});
+  ASSERT_NE(sadd, nullptr);
+  minikv::CommandResponse response = sadd->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsInteger());
+  EXPECT_EQ(response.reply.integer(), 2);
+
+  std::unique_ptr<minikv::Cmd> scard =
+      CreateFromParts({"SCARD", "set:cmd"});
+  ASSERT_NE(scard, nullptr);
+  response = scard->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsInteger());
+  EXPECT_EQ(response.reply.integer(), 2);
+
+  std::unique_ptr<minikv::Cmd> sismember =
+      CreateFromParts({"SISMEMBER", "set:cmd", "a"});
+  ASSERT_NE(sismember, nullptr);
+  response = sismember->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsInteger());
+  EXPECT_EQ(response.reply.integer(), 1);
+
+  std::unique_ptr<minikv::Cmd> smembers =
+      CreateFromParts({"SMEMBERS", "set:cmd"});
+  ASSERT_NE(smembers, nullptr);
+  response = smembers->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ExpectBulkStringArrayUnordered(response.reply, {"a", "b"});
+
+  std::unique_ptr<minikv::Cmd> srem =
+      CreateFromParts({"SREM", "set:cmd", "a", "a", "x"});
+  ASSERT_NE(srem, nullptr);
+  response = srem->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsInteger());
+  EXPECT_EQ(response.reply.integer(), 1);
+
+  std::vector<std::string> members;
+  ASSERT_TRUE(set_module_->ReadMembers("set:cmd", &members).ok());
+  ExpectMembersUnordered(members, {"b"});
+}
+
+TEST_F(ModuleRuntimeTest, RandomSetCommandsMatchExpectedSideEffects) {
+  ASSERT_TRUE(set_module_->AddMembers("set:rand", {"a", "b", "c"}, nullptr).ok());
+
+  std::unique_ptr<minikv::Cmd> srandmember =
+      CreateFromParts({"SRANDMEMBER", "set:rand"});
+  ASSERT_NE(srandmember, nullptr);
+  minikv::CommandResponse response = srandmember->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsBulkString());
+  EXPECT_TRUE(response.reply.string() == "a" || response.reply.string() == "b" ||
+              response.reply.string() == "c");
+
+  uint64_t size = 0;
+  ASSERT_TRUE(set_module_->Cardinality("set:rand", &size).ok());
+  EXPECT_EQ(size, 3U);
+
+  std::unique_ptr<minikv::Cmd> spop = CreateFromParts({"SPOP", "set:rand"});
+  ASSERT_NE(spop, nullptr);
+  response = spop->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsBulkString());
+  const std::string popped = response.reply.string();
+  EXPECT_TRUE(popped == "a" || popped == "b" || popped == "c");
+
+  ASSERT_TRUE(set_module_->Cardinality("set:rand", &size).ok());
+  EXPECT_EQ(size, 2U);
+
+  bool found = true;
+  ASSERT_TRUE(set_module_->IsMember("set:rand", popped, &found).ok());
+  EXPECT_FALSE(found);
+}
+
+TEST_F(ModuleRuntimeTest, SetCommandsOnMissingKeyReturnEmptySuccess) {
+  minikv::CommandResponse response =
+      CreateFromParts({"SCARD", "missing-set"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsInteger());
+  EXPECT_EQ(response.reply.integer(), 0);
+
+  response = CreateFromParts({"SMEMBERS", "missing-set"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ExpectBulkStringArray(response.reply, {});
+
+  response = CreateFromParts({"SISMEMBER", "missing-set", "a"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsInteger());
+  EXPECT_EQ(response.reply.integer(), 0);
+
+  response = CreateFromParts({"SREM", "missing-set", "a"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsInteger());
+  EXPECT_EQ(response.reply.integer(), 0);
+
+  response = CreateFromParts({"SRANDMEMBER", "missing-set"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  EXPECT_TRUE(response.reply.IsNull());
+
+  response = CreateFromParts({"SPOP", "missing-set"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  EXPECT_TRUE(response.reply.IsNull());
+}
+
+TEST_F(ModuleRuntimeTest, TypeDelAndExpireExecuteAgainstSetKeys) {
+  ASSERT_TRUE(set_module_->AddMembers("set:lifecycle", {"a", "b"}, nullptr).ok());
+
+  minikv::CommandResponse response =
+      CreateFromParts({"TYPE", "set:lifecycle"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ExpectBulkString(response.reply, "set");
+
+  response = CreateFromParts({"EXPIRE", "set:lifecycle", "0"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsInteger());
+  EXPECT_EQ(response.reply.integer(), 1);
+
+  response = CreateFromParts({"TYPE", "set:lifecycle"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ExpectBulkString(response.reply, "none");
+
+  response = CreateFromParts({"SADD", "set:lifecycle", "fresh"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsInteger());
+  EXPECT_EQ(response.reply.integer(), 1);
+
+  response = CreateFromParts({"DEL", "set:lifecycle"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsInteger());
+  EXPECT_EQ(response.reply.integer(), 1);
+
+  response = CreateFromParts({"EXISTS", "set:lifecycle"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsInteger());
+  EXPECT_EQ(response.reply.integer(), 0);
 }
 
 TEST_F(ModuleRuntimeTest, HashCommandsOnMissingKeyReturnEmptySuccess) {

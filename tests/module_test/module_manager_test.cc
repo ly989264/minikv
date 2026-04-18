@@ -8,6 +8,7 @@
 #include "runtime/module/module_manager.h"
 #include "core/core_module.h"
 #include "types/hash/hash_module.h"
+#include "types/set/set_module.h"
 
 namespace {
 
@@ -151,6 +152,7 @@ TEST(ModuleManagerTest, BuiltinModulesLoadIntoUnifiedRegistry) {
   std::vector<std::unique_ptr<minikv::Module>> modules;
   modules.push_back(std::make_unique<minikv::CoreModule>());
   modules.push_back(std::make_unique<minikv::HashModule>());
+  modules.push_back(std::make_unique<minikv::SetModule>());
 
   minikv::Scheduler scheduler(2, 16);
   minikv::ModuleManager manager(nullptr, &scheduler, std::move(modules));
@@ -165,6 +167,17 @@ TEST(ModuleManagerTest, BuiltinModulesLoadIntoUnifiedRegistry) {
   const minikv::CmdRegistration* hgetall =
       manager.command_registry().Find("HGETALL");
   const minikv::CmdRegistration* hdel = manager.command_registry().Find("HDEL");
+  const minikv::CmdRegistration* sadd = manager.command_registry().Find("SADD");
+  const minikv::CmdRegistration* scard =
+      manager.command_registry().Find("SCARD");
+  const minikv::CmdRegistration* smembers =
+      manager.command_registry().Find("SMEMBERS");
+  const minikv::CmdRegistration* sismember =
+      manager.command_registry().Find("SISMEMBER");
+  const minikv::CmdRegistration* spop = manager.command_registry().Find("SPOP");
+  const minikv::CmdRegistration* srandmember =
+      manager.command_registry().Find("SRANDMEMBER");
+  const minikv::CmdRegistration* srem = manager.command_registry().Find("SREM");
 
   ASSERT_NE(ping, nullptr);
   ASSERT_NE(type, nullptr);
@@ -173,6 +186,13 @@ TEST(ModuleManagerTest, BuiltinModulesLoadIntoUnifiedRegistry) {
   ASSERT_NE(hset, nullptr);
   ASSERT_NE(hgetall, nullptr);
   ASSERT_NE(hdel, nullptr);
+  ASSERT_NE(sadd, nullptr);
+  ASSERT_NE(scard, nullptr);
+  ASSERT_NE(smembers, nullptr);
+  ASSERT_NE(sismember, nullptr);
+  ASSERT_NE(spop, nullptr);
+  ASSERT_NE(srandmember, nullptr);
+  ASSERT_NE(srem, nullptr);
   EXPECT_EQ(ping->owner_module, "core");
   EXPECT_EQ(type->owner_module, "core");
   EXPECT_EQ(exists->owner_module, "core");
@@ -180,6 +200,13 @@ TEST(ModuleManagerTest, BuiltinModulesLoadIntoUnifiedRegistry) {
   EXPECT_EQ(hset->owner_module, "hash");
   EXPECT_EQ(hgetall->owner_module, "hash");
   EXPECT_EQ(hdel->owner_module, "hash");
+  EXPECT_EQ(sadd->owner_module, "set");
+  EXPECT_EQ(scard->owner_module, "set");
+  EXPECT_EQ(smembers->owner_module, "set");
+  EXPECT_EQ(sismember->owner_module, "set");
+  EXPECT_EQ(spop->owner_module, "set");
+  EXPECT_EQ(srandmember->owner_module, "set");
+  EXPECT_EQ(srem->owner_module, "set");
 }
 
 }  // namespace

@@ -10,10 +10,12 @@ Current builtin modules:
 - `CoreModule`: `PING`, `TYPE`, `EXISTS`, `DEL`, `EXPIRE`, `TTL`, `PTTL`,
   `PERSIST`
 - `HashModule`: `HSET`, `HGETALL`, `HDEL`
+- `SetModule`: `SADD`, `SCARD`, `SMEMBERS`, `SISMEMBER`, `SPOP`,
+  `SRANDMEMBER`, `SREM`
 
 Current user-visible data model:
 
-- hash keys only
+- hash and set keys
 - per-key metadata with live, expired, and tombstone lifecycle states
 - module-private storage keyspaces in a shared RocksDB `module` column family
 
@@ -79,6 +81,7 @@ from the metadata recorded in `third_party/rocksdb/linux-x86_64/BUNDLE_INFO.env`
   module services
 - `src/core/`: protocol-level builtin commands and key lifecycle services
 - `src/types/hash/`: hash commands, hash storage semantics, and observer bridge
+- `src/types/set/`: set commands and set storage semantics
 - `src/`: implementation sources. There is no `include/minikv/` public header
   tree yet in this standalone project
 - `tests/`: unit and integration tests

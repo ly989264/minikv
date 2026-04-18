@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <arpa/inet.h>
 #include <sys/socket.h>
 #include <sys/types.h>
@@ -26,6 +27,7 @@ struct RespValue {
     kInteger,
     kBulkString,
     kArray,
+    kNull,
   };
 
   Type type = Type::kSimpleString;
@@ -40,6 +42,25 @@ std::string EncodeCommand(const std::vector<std::string>& parts) {
     out += "$" + std::to_string(part.size()) + "\r\n" + part + "\r\n";
   }
   return out;
+}
+
+void ExpectArrayTextsUnordered(const RespValue& value,
+                               const std::vector<std::string>& expected) {
+  ASSERT_EQ(value.type, RespValue::Type::kArray);
+  ASSERT_EQ(value.array.size(), expected.size());
+
+  std::vector<std::string> actual;
+  actual.reserve(value.array.size());
+  for (const auto& item : value.array) {
+    ASSERT_EQ(item.type, RespValue::Type::kBulkString);
+    actual.push_back(item.text);
+  }
+
+  std::vector<std::string> actual_sorted = actual;
+  std::vector<std::string> expected_sorted = expected;
+  std::sort(actual_sorted.begin(), actual_sorted.end());
+  std::sort(expected_sorted.begin(), expected_sorted.end());
+  EXPECT_EQ(actual_sorted, expected_sorted);
 }
 
 void WriteAll(int fd, const std::string& data) {
@@ -129,6 +150,10 @@ RespValue ReadRespValue(int fd) {
       }
       return value;
     }
+    case '_':
+      value.type = RespValue::Type::kNull;
+      EXPECT_EQ(ReadExact(fd, 2), "\r\n");
+      return value;
     default:
       ADD_FAILURE() << "unexpected RESP prefix";
       return value;
@@ -366,6 +391,84 @@ TEST_F(MiniKVServerTest, ConcurrentClientsAcrossIoThreads) {
   for (auto& client : clients) {
     client.join();
   }
+}
+
+TEST_F(MiniKVServerTest, SetLifecycleAndRandomCommandsWorkOverNetwork) {
+  const int fd = ConnectToServer(server_->port());
+
+  WriteAll(fd, EncodeCommand({"SADD", "set:1", "a", "b", "c", "a"}));
+  RespValue reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kInteger);
+  ASSERT_EQ(reply.integer, 3);
+
+  WriteAll(fd, EncodeCommand({"TYPE", "set:1"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kBulkString);
+  ASSERT_EQ(reply.text, "set");
+
+  WriteAll(fd, EncodeCommand({"SCARD", "set:1"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kInteger);
+  ASSERT_EQ(reply.integer, 3);
+
+  WriteAll(fd, EncodeCommand({"SISMEMBER", "set:1", "a"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kInteger);
+  ASSERT_EQ(reply.integer, 1);
+
+  WriteAll(fd, EncodeCommand({"SISMEMBER", "set:1", "x"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kInteger);
+  ASSERT_EQ(reply.integer, 0);
+
+  WriteAll(fd, EncodeCommand({"SMEMBERS", "set:1"}));
+  reply = ReadRespValue(fd);
+  ExpectArrayTextsUnordered(reply, {"a", "b", "c"});
+
+  WriteAll(fd, EncodeCommand({"SRANDMEMBER", "set:1"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kBulkString);
+  ASSERT_TRUE(reply.text == "a" || reply.text == "b" || reply.text == "c");
+
+  WriteAll(fd, EncodeCommand({"SCARD", "set:1"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kInteger);
+  ASSERT_EQ(reply.integer, 3);
+
+  WriteAll(fd, EncodeCommand({"SPOP", "set:1"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kBulkString);
+  ASSERT_TRUE(reply.text == "a" || reply.text == "b" || reply.text == "c");
+
+  WriteAll(fd, EncodeCommand({"SCARD", "set:1"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kInteger);
+  ASSERT_EQ(reply.integer, 2);
+
+  WriteAll(fd, EncodeCommand({"SREM", "set:1", "a", "b", "c"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kInteger);
+  ASSERT_EQ(reply.integer, 2);
+
+  WriteAll(fd, EncodeCommand({"TYPE", "set:1"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kBulkString);
+  ASSERT_EQ(reply.text, "none");
+
+  WriteAll(fd, EncodeCommand({"EXISTS", "set:1"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kInteger);
+  ASSERT_EQ(reply.integer, 0);
+
+  WriteAll(fd, EncodeCommand({"SPOP", "set:1"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kNull);
+
+  WriteAll(fd, EncodeCommand({"SRANDMEMBER", "set:1"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kNull);
+
+  close(fd);
 }
 
 TEST_F(MiniKVServerTest, MalformedRespDoesNotPoisonNextCommand) {
