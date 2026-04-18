@@ -9,15 +9,18 @@ It follows the current implementation rather than a future target design.
 
 The main request path is:
 
-`main -> NetworkServer -> RESP parser -> runtime CommandRegistry -> Scheduler -> Worker -> builtin module command -> HashModule -> ModuleSnapshot / ModuleWriteBatch -> StorageEngine -> RocksDB`
+`main -> MiniKV::Open -> ModuleManager -> NetworkServer -> RespParser -> CreateCmd -> Scheduler -> Worker -> builtin module command -> ModuleSnapshot / ModuleWriteBatch -> StorageEngine -> RocksDB`
 
-Current scope is intentionally narrow:
+Current user-visible scope:
 
-- supported commands: `PING`, `HSET`, `HGETALL`, `HDEL`
+- supported commands:
+  `PING`, `TYPE`, `EXISTS`, `DEL`, `EXPIRE`, `TTL`, `PTTL`, `PERSIST`,
+  `HSET`, `HGETALL`, `HDEL`
 - supported data type: hash only
 - deployment shape: one POSIX process exposing a TCP server
+- module shape: builtin modules only
 
-The most important implementation fact is that `minikv` is now network-only.
+The most important implementation fact is that `minikv` is network-only.
 There is no parallel function-call command surface to keep in sync.
 
 ## Architecture And Class Map
@@ -43,11 +46,10 @@ Runtime owner.
 
 Important behavior:
 
-- `MiniKV::Open()` opens the RocksDB-backed storage engine before publishing
-  the runtime
+- `MiniKV::Open()` opens RocksDB before publishing the runtime
 - builtin modules load through `ModuleManager`
+- current builtin load order is `CoreModule`, then `HashModule`
 - current module support is builtin-only and source-level only
-- `MiniKV` does not expose command execution helpers
 - `MiniKV` exists to share runtime state with `NetworkServer`
 
 ### `src/runtime/module/*`
@@ -60,11 +62,20 @@ This layer provides:
 - `ModuleManager`
 - `ModuleServices`
 - `ModuleCommandRegistry`
+- `ModuleExportRegistry`
 - `ModuleStorage`
 - `ModuleSnapshotService`
+- `ModuleBackgroundService`
 - `ModuleSchedulerView`
 - `ModuleNamespace`
+- `ModuleKeyspace`
 - `ModuleMetrics`
+
+Notable current exports:
+
+- `core.key_service`
+- `core.whole_key_delete_registry`
+- `hash.indexing_bridge`
 
 ### `src/network/network_server.h` and `src/network/network_server.cc`
 
@@ -76,24 +87,30 @@ Network and connection-management layer.
 - accepting connections
 - assigning each connection to one I/O thread
 - reading and buffering bytes
-- parsing RESP requests
-- creating `Cmd` objects from RESP parts
+- parsing RESP request arrays made of bulk strings
+- creating `Cmd` objects from parsed parts
 - submitting commands to the shared `Scheduler`
+- preserving per-connection response order with request sequence numbers
 - writing encoded RESP responses
-- idle timeout and orderly shutdown
+- enforcing connection count, request size, and idle timeout limits
+- exposing in-memory connection and parser metrics
 
-### `src/execution/command/*`
+### `src/execution/command/*` and `src/execution/registry/*`
 
-Command creation and execution.
+Command creation and registry.
 
 This layer:
 
 - turns parsed RESP parts into initialized `Cmd` objects
-- looks command names up in the runtime registry owned by `ModuleManager`
-- performs command-specific validation and route-key derivation
-- executes through module-bound command objects
+- looks command names up in the shared runtime `CommandRegistry`
+- performs command-specific validation
+- derives a per-command lock plan: none, single-key, or multi-key
+- returns a transport-facing `CommandResponse`
 
-### `src/execution/scheduler/scheduler.*` and `src/execution/worker/*`
+`CoreModule` registers the core commands and `HashModule` registers the hash
+commands during `OnLoad()`.
+
+### `src/execution/scheduler/*` and `src/execution/worker/*`
 
 Concurrency core.
 
@@ -101,17 +118,61 @@ Concurrency core.
 
 - one worker thread per configured worker
 - one bounded MPSC queue per worker
-- a shared `KeyLockTable`
-- round-robin plus probe admission control
+- a shared striped `KeyLockTable`
+- round-robin plus probe-based admission control
 - queue depth, inflight, and rejection metrics
 
 Correctness rule:
 
-- acquire the striped key lock for `cmd->RouteKey()`
+- acquire the locks described by `cmd->lock_plan()`
 - execute `Cmd::Execute()`
-- release the key lock after completion
+- release the locks after completion
 
-### `src/storage/engine/storage_engine.*`
+Single-key commands such as `HSET` and `TYPE` use one route key. Multi-key
+commands such as `EXISTS` and `DEL` use a canonicalized multi-key lock plan.
+
+### `src/core/*`
+
+Core builtin commands and key lifecycle services.
+
+This layer provides:
+
+- protocol-level commands such as `PING`, `TYPE`, `EXISTS`, `DEL`, `EXPIRE`,
+  `TTL`, `PTTL`, and `PERSIST`
+- `CoreKeyService`, which owns metadata encoding, lifecycle lookup, TTL
+  calculations, and metadata writes
+- `WholeKeyDeleteRegistry`, which lets type modules participate in `DEL` and
+  zero-or-negative `EXPIRE`
+
+Key lifecycle states visible in code:
+
+- missing
+- live
+- expired
+- tombstone
+
+### `src/types/hash/*`
+
+Hash semantics layer.
+
+`HashModule` is responsible for:
+
+- registering `HSET`, `HGETALL`, and `HDEL` during `OnLoad()`
+- exporting `HashIndexingBridge`
+- registering itself as the whole-key delete handler for hash values
+- implementing `PutField()`, `ReadAll()`, `DeleteFields()`, and
+  `DeleteWholeKey()`
+- synchronously notifying `HashObserver` instances before commit
+
+Current hash behavior:
+
+- hash metadata lives in the `meta` column family
+- hash fields live in the `hash` column family
+- deleting the final field writes a metadata tombstone instead of removing the
+  metadata row
+- recreating an expired or tombstoned hash bumps its metadata version
+
+### `src/storage/engine/*`
 
 RocksDB integration layer.
 
@@ -127,6 +188,7 @@ Current column families:
 - `default`
 - `meta`
 - `hash`
+- `module`
 
 ### `src/storage/engine/snapshot.*` and `src/storage/engine/write_context.*`
 
@@ -134,34 +196,26 @@ Read and write helpers.
 
 - `Snapshot` pins one RocksDB snapshot and serves consistent reads
 - `WriteContext` owns one logical write batch and commits it once
-
-### `src/types/hash/*`
-
-Hash semantics layer.
-
-`HashModule` is responsible for:
-
-- registering `HSET`, `HGETALL`, and `HDEL` during `OnLoad()`
-- `PutField()`
-- `ReadAll()`
-- `DeleteFields()`
-
-Current design rules:
-
-- reads go through `ModuleSnapshot`
-- writes go through `ModuleWriteBatch`
-- the current module boundary is builtin-only, with no external ABI
+- module code reaches those helpers through `ModuleSnapshot` and
+  `ModuleWriteBatch`
 
 ### `src/storage/encoding/key_codec.*`
 
 Storage-key encoding layer.
 
-It defines:
+`KeyCodec` defines:
 
-- `ValueType`
-- `ValueEncoding`
-- `KeyMetadata`
-- binary encoding helpers for metadata and hash keys
+- metadata-key encoding for the `meta` column family
+- hash-data-prefix encoding
+- hash-data-key encoding
+- prefix checks and field extraction helpers for hash scans
+
+Important boundary:
+
+- `KeyCodec` owns the key encodings
+- `DefaultCoreKeyService` owns the metadata value encoding and decoding
+- `ModuleKeyspace` encoding for the `module` column family lives in
+  `src/runtime/module/module_services.cc`
 
 ## Thread Model
 
@@ -174,21 +228,29 @@ The runtime currently has three kinds of threads:
 ### When threads are created
 
 - `MiniKV::Open()` constructs the shared scheduler and its worker threads
+- `ModuleManager::Initialize()` starts the shared background executor
 - `NetworkServer::Start()` creates all I/O threads and then the accept thread
 
 ### I/O and worker split
 
-- I/O threads own sockets, read buffers, write buffers, and response reordering
+- I/O threads own sockets, read buffers, write buffers, connection-local
+  request sequence numbers, and response reordering
 - worker threads own command execution
-- same-key serialization is enforced by `KeyLockTable`
-- response order is preserved per connection by request sequence numbers
+- same-key and multi-key serialization is enforced by `KeyLockTable`
+- response order is preserved per connection by request sequence numbers even
+  when different workers finish out of order
 
 ## Reading Route
 
 1. `README.md`
-2. `docs/architecture.md`
-3. `docs/layers/runtime.md`
-4. `docs/layers/network.md`
-5. `docs/layers/command.md`
-6. `docs/layers/worker.md`
-7. `docs/layers/codec.md`
+2. `docs/build.md`
+3. `docs/getting-started.md`
+4. `docs/module-lifecycle.md`
+5. `docs/module-services.md`
+6. `docs/hash-module-integration.md`
+7. `docs/architecture.md`
+8. `docs/layers/runtime.md`
+9. `docs/layers/network.md`
+10. `docs/layers/command.md`
+11. `docs/layers/worker.md`
+12. `docs/layers/codec.md`

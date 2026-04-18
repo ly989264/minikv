@@ -2,73 +2,98 @@
 
 ## Status
 
-Accepted on 2026-04-17.
+Accepted on 2026-04-18.
 
 ## Context
 
 This ADR documents the consistency model that the current `minikv`
 implementation actually provides. It is scoped to the current command set:
-`PING`, `HSET`, `HGETALL`, and `HDEL`.
+`PING`, `TYPE`, `EXISTS`, `DEL`, `EXPIRE`, `TTL`, `PTTL`, `PERSIST`,
+`HSET`, `HGETALL`, and `HDEL`.
 
 ## Decision
 
 The current consistency model is intentionally narrow and should be read as a
 baseline contract, not as a general Redis-compatible transaction model.
 
-### Same-Key Consistency Depends On `Scheduler` And `KeyLockTable`
+### Keyed Consistency Depends On `Scheduler` And `KeyLockTable`
 
-For commands with a route key, correctness for same-key concurrency depends on
-the shared `Scheduler` plus `KeyLockTable`:
+For commands with a lock plan, correctness depends on the shared `Scheduler`
+plus `KeyLockTable`:
 
-- `HSET`, `HGETALL`, and `HDEL` all route on the user key
-- worker threads acquire a striped mutex derived from that key before executing
-  the command
-- same-key requests therefore execute serially even when different workers pick
-  them up
+- single-key commands such as `TYPE`, `EXPIRE`, `TTL`, `PTTL`, `PERSIST`,
+  `HSET`, `HGETALL`, and `HDEL` acquire one logical key lock
+- multi-key commands such as `EXISTS` and `DEL` acquire a canonicalized set of
+  stripe locks in stable order
+- requests that overlap on the same protected stripes therefore serialize even
+  when different workers pick them up
 
-This means current same-key consistency is still provided by keyed execution
-serialization, not by RocksDB transactions or multi-key locking.
+This means current consistency still comes from keyed execution serialization,
+not from RocksDB transactions.
 
-### Logical Hash Reads Use One Snapshot Across `meta` And `hash`
+### Logical Reads Use One Snapshot Per Command
 
-Current hash reads now use RocksDB snapshots:
+Current logical reads use RocksDB snapshots:
 
+- core lookup-based commands create one `ModuleSnapshot`
 - `HashModule::ReadAll()` acquires one `ModuleSnapshot`
-- metadata lookup and `hash` prefix scan share that same snapshot handle
-- modules do not reach directly for raw iterators
+- metadata lookup and hash-prefix scan share that same snapshot handle
 
-This gives current hash reads a consistent multi-column-family view for one
-logical hash operation.
+This gives current commands a consistent multi-column-family view for one
+logical operation.
 
 This is still not general snapshot isolation:
 
 - no snapshot is shared across multiple commands
-- no cross-key read transaction exists
 - the public API does not expose long-lived snapshots
+- there is no cross-connection transaction model
 
-### Writes Use `ModuleWriteBatch` But Still Depend On Same-Key Serialization
+### Writes Use One Write Batch Per Logical Mutation
 
-Current writes are grouped by one logical `ModuleWriteBatch`:
+Current write paths are grouped by one logical `ModuleWriteBatch`:
 
 - `HSET` and `HDEL` build one `rocksdb::WriteBatch` per logical mutation
+- `DEL` builds one shared batch across the targeted keys in that command
+- `EXPIRE`, `PERSIST`, and whole-key delete flows also stage writes through one
+  logical batch
 - the batch is committed once after the logical mutation is fully prepared
 
 This does not remove the need for keyed serialization:
 
-- read-modify-write flows still rely on same-key scheduler locking to avoid
-  conflicting same-key updates
-- there is still no multi-key atomicity
+- read-modify-write flows still rely on scheduler locking to avoid conflicting
+  updates
 
-### Multi-Key Operations Have No Atomicity Guarantee
+### Multi-Key Support Is Limited But Real
 
-The current command set does not define any multi-key atomic operation.
+The current command set does contain limited multi-key operations:
 
-Operationally:
+- `EXISTS key [key ...]` acquires a multi-key lock plan and reads the targeted
+  keys from one snapshot while holding those locks
+- `DEL key [key ...]` acquires a multi-key lock plan, reads the targeted keys
+  from one snapshot, stages all deletes and tombstone writes in one batch, and
+  commits once
 
-- each command routes to at most one key
-- different keys may run in parallel on different workers
-- there is no mechanism for atomically reading or updating multiple keys
-- any future multi-key command would need an explicit new execution contract
+Current caveats:
+
+- duplicate keys are preserved by `EXISTS` counting semantics
+- duplicate keys are deduplicated by `DEL` deletion semantics
+- there is still no general user-facing transaction interface
+- there is still no arbitrary multi-command atomicity
+
+### TTL, Tombstones, And Versioning Are Active Semantics
+
+The current metadata schema fields `version` and `expire_at_ms` are active:
+
+- `EXPIRE` writes TTL metadata for live keys
+- `TTL` and `PTTL` interpret missing, live, expired, and tombstoned states
+- zero-or-negative `EXPIRE` routes through whole-key delete
+- deleting the final hash field writes a tombstone metadata row
+- `DEL` and whole-key delete also write tombstones
+- recreating an expired or tombstoned hash increments the metadata version so
+  stale field rows remain unreachable
+
+This means those fields must be documented as implemented behavior, not as
+reserved placeholders.
 
 ### Module SPI Is Builtin-Only
 
@@ -78,30 +103,17 @@ The current module SPI is intentionally narrow:
 - commands are registered during `OnLoad()` into one runtime registry
 - there is no external ABI or dynamic module loading
 
-### `version` And `expire_at_ms` Are Still Reserved Fields Only
-
-The current metadata schema contains `version` and `expire_at_ms`, but they do
-not currently provide active semantics:
-
-- new hashes are created with `version = 1`
-- current write paths do not roll the version forward
-- current read and write paths do not enforce TTL or expiration behavior
-- current scans use whatever version is already stored in metadata
-
-These fields should therefore be treated as reserved metadata fields in the
-baseline, not as implemented versioning or expiration features.
-
 ## Consequences
 
-The current system is safe for its small single-key hash command set, but its
+The current system is safe for its small builtin command set, but its
 consistency boundary remains intentionally narrow:
 
-- same-key behavior relies on scheduler-layer keyed serialization
-- logical hash reads use one snapshot across `meta` and `hash`
+- correctness relies on scheduler-layer keyed serialization
+- logical reads use one snapshot per command
 - writes use one write batch per logical mutation
-- multi-key atomicity does not exist
+- limited multi-key semantics exist for `EXISTS` and `DEL`
+- there is still no general transaction interface
 - modules are builtin-only in the current implementation
-- reserved metadata fields must not be documented as active semantics
 
-Any future expansion beyond the current single-key hash path should update this
-ADR before claiming stronger guarantees.
+Any future expansion beyond the current builtin surface should update this ADR
+before claiming stronger guarantees.

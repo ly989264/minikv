@@ -5,18 +5,18 @@ modules. Modules must not reach around it for private runtime objects such as
 `StorageEngine`, `Snapshot`, `WriteContext`, `Scheduler`, or
 `BackgroundExecutor`.
 
-Current services are:
+Current service accessors are:
 
-- `command_registry`
-- `exports`
-- `storage`
-- `snapshot`
-- `background`
-- `scheduler`
-- `namespace`
-- `metrics`
+- `command_registry()`
+- `exports()`
+- `storage()`
+- `snapshot()`
+- `background()`
+- `scheduler()`
+- `name_space()`
+- `metrics()`
 
-## `command_registry`
+## `command_registry()`
 
 Type: `ModuleCommandRegistry`
 
@@ -24,14 +24,14 @@ Responsibilities:
 
 - register module commands into the shared runtime registry
 - stamp each registration with the owning module name
-- enforce builtin command source metadata
+- force `CommandSource::kBuiltin`
 - reject registration outside `OnLoad()`
 - surface command-name conflicts before startup succeeds
 
 Conflicts are case-insensitive because command names are normalized before
 insertion.
 
-## `exports`
+## `exports()`
 
 Type: `ModuleExportRegistry`
 
@@ -47,12 +47,14 @@ Responsibilities:
 Current rules:
 
 - providers publish during `OnLoad()` or `OnStart()`
-- the current hash bridge publishes `hash.indexing_bridge` during `OnLoad()`
-- consumers resolve and bind exports during `OnStart()`
+- the current core exports publish `core.key_service` and
+  `core.whole_key_delete_registry`
+- the current hash bridge publishes `hash.indexing_bridge`
+- consumers usually resolve and bind exports during `OnStart()`
 - lookup is typed, so providers must publish the interface type they intend
   consumers to request
 
-## `storage`
+## `storage()`
 
 Type: `ModuleStorage`
 
@@ -64,9 +66,9 @@ Responsibilities:
   `WriteContext`
 
 Modules can mutate storage through this service, but they cannot access the raw
-kernel write path directly. Module-private state now goes through the shared
-RocksDB `module` column family rather than having modules bind themselves to the
-global `StorageColumnFamily` layout.
+kernel write path directly. Module-private state goes through the shared
+RocksDB `module` column family rather than having modules bind themselves to
+the global `StorageColumnFamily` layout.
 
 `ModuleKeyspace` is the storage-side companion to `ModuleNamespace`:
 
@@ -88,10 +90,8 @@ Compatibility note:
 
 - `ModuleWriteBatch` and `ModuleSnapshot` still expose raw
   `StorageColumnFamily` helpers for the existing hash path
-- this is a temporary compatibility bridge for `HashModule` and current hash
-  observers
-- follow-up work should migrate remaining module callers onto
-  keyspace-aware-only storage APIs before the raw-CF entrypoints are retired
+- this is a compatibility bridge for `HashModule` and current hash observers
+- new module-private code should prefer the keyspace-aware APIs
 
 Current hash observer behavior also depends on this boundary:
 
@@ -102,7 +102,7 @@ Current hash observer behavior also depends on this boundary:
 - if any observer returns an error, the shared batch is never committed and the
   base write fails as a whole
 
-## `snapshot`
+## `snapshot()`
 
 Type: `ModuleSnapshotService`
 
@@ -111,15 +111,15 @@ Responsibilities:
 - create read-only `ModuleSnapshot` views
 - expose consistent keyspace-aware `Get()` and `ScanPrefix()` helpers without
   leaking raw `Snapshot`
-- create `ModuleIterator` objects for `seek`, `next`, `valid`, `key`, `value`,
+- create `ModuleIterator` objects for `Seek`, `Next`, `Valid`, `key`, `value`,
   and `status` iteration inside one `ModuleKeyspace`
 
 This is the supported way for modules to perform multi-read logical operations.
 
 `ModuleIterator` only surfaces keys from the requested keyspace. Its `key()`
-value is the local module key, not the internal encoded RocksDB key.
+value is the decoded local module key, not the internal encoded RocksDB key.
 
-## `background`
+## `background()`
 
 Type: `ModuleBackgroundService`
 
@@ -127,8 +127,8 @@ Responsibilities:
 
 - submit module-owned maintenance work onto the shared background executor
 - keep modules from depending on private runtime thread ownership
-- provide a minimal async hook for future search indexing work without exposing
-  a general-purpose thread-pool API
+- provide a minimal async hook for future maintenance or indexing work without
+  exposing a general-purpose thread-pool API
 
 Current execution model:
 
@@ -139,13 +139,10 @@ Current execution model:
 
 Known limitation:
 
-- this executor is intentionally minimal for PR-B
 - there is still no cancellation, prioritization, per-module quota, or
   structured task-failure reporting
-- future sessions should only expand it when a concrete module use case proves
-  the need
 
-## `scheduler`
+## `scheduler()`
 
 Type: `ModuleSchedulerView`
 
@@ -156,22 +153,22 @@ Responsibilities:
 
 Current scheduler service is intentionally read-only. Modules cannot use it to
 submit background tasks or bypass the normal request execution path. Background
-work now goes through the separate `background` service instead.
+work goes through the separate `background` service instead.
 
-## `namespace`
+## `name_space()`
 
 Type: `ModuleNamespace`
 
 Responsibilities:
 
 - describe module identity
-- qualify local names such as metric keys
+- qualify local names such as export names and metric keys
 
 Current namespace semantics are about module identity only. They do not rewrite
-user keys and do not add storage prefixes. Module storage prefixes now live in
+user keys and do not add storage prefixes. Module storage prefixes live in
 `ModuleKeyspace`, not in `ModuleNamespace`.
 
-## `metrics`
+## `metrics()`
 
 Type: `ModuleMetrics`
 

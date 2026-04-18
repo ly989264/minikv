@@ -2,32 +2,53 @@
 
 ## Status
 
-Accepted on 2026-04-17.
+Accepted on 2026-04-18.
 
 ## Context
 
-This ADR freezes the current `minikv` implementation boundaries as they exist in
-the codebase today after the search-prep kernel split. It is intentionally
-descriptive. It does not propose future behavior.
+This ADR freezes the current `minikv` implementation boundaries as they exist
+in the codebase today. It is intentionally descriptive. It does not propose
+future behavior.
 
 ## Current Supported Commands
 
-The current command registry contains exactly four commands:
+The current command registry contains exactly eleven commands:
 
 - `PING`
+- `TYPE`
+- `EXISTS`
+- `DEL`
+- `EXPIRE`
+- `TTL`
+- `PTTL`
+- `PERSIST`
 - `HSET`
 - `HGETALL`
 - `HDEL`
 
 Current command behavior:
 
-- `PING` takes no arguments and returns `PONG`.
+- `PING` takes no arguments and returns `PONG`
+- `TYPE key` returns the current logical type name or `none`
+- `EXISTS key [key ...]` counts the number of live keys and preserves duplicate
+  keys in the count
+- `DEL key [key ...]` deletes each live key at most once and returns the number
+  of deleted keys
+- `EXPIRE key seconds` sets a TTL on a live key and returns `1` on success, `0`
+  when the key is not live; zero or negative seconds route through whole-key
+  delete
+- `TTL key` returns `-2` for missing, expired, or tombstoned keys, `-1` for
+  live keys without TTL, or the remaining TTL in whole seconds
+- `PTTL key` returns the same state codes as `TTL`, but uses milliseconds for
+  positive TTL values
+- `PERSIST key` clears a live key's TTL and returns `1` on success, `0`
+  otherwise
 - `HSET key field value` stores one hash field and returns integer `1` when the
-  field is inserted, `0` when the field already exists and is overwritten.
+  field is inserted, `0` when the field already exists and is overwritten
 - `HGETALL key` returns a flat RESP array of alternating field and value bulk
-  strings.
+  strings for the visible incarnation of the hash
 - `HDEL key field [field ...]` removes existing fields and returns the integer
-  count of removed fields.
+  count of removed fields
 
 No other command names are registered in the shared runtime `CommandRegistry`
 loaded by `ModuleManager`.
@@ -49,35 +70,34 @@ Execution routing rules today:
 - the network path submits work into one shared `Scheduler`
 - worker selection is queue-oriented round-robin with probing for a queue that
   still has capacity
-- same-key serialization depends on `KeyLockTable`, which locks by a striped
-  hash of `cmd->RouteKey()`
+- locking is driven by a command lock plan: none, single-key, or multi-key
 - responses are shipped back to the owning I/O thread and reordered by request
   sequence before writing to the socket
 
-This means socket progress and command execution remain separated, but there is
-no longer a duplicated runtime structure between `MiniKV` and
-`NetworkServer`.
+This means socket progress and command execution remain separated.
 
 ## Current Response Model
 
-`CommandResponse` currently maps to a narrow RESP surface:
+`CommandResponse` currently maps builtin command results onto this active RESP
+surface:
 
 - simple string
 - integer
+- bulk string
 - array of bulk strings
 - error
 
 Current command-to-response mapping:
 
 - `PING` -> simple string
-- `HSET` -> integer
-- `HGETALL` -> array of bulk strings
-- `HDEL` -> integer
+- `TYPE` -> bulk string
+- `EXISTS`, `DEL`, `EXPIRE`, `TTL`, `PTTL`, `PERSIST`, `HSET`, `HDEL` ->
+  integer
+- `HGETALL` -> flat array of bulk strings
 - command or execution failures -> RESP error
 
-There is no current support for richer reply shapes such as maps, sets,
-attribute replies, pushed messages, streaming replies, cursor replies, or
-module-defined custom reply types.
+The reply tree and encoder can also represent maps and nulls, but no current
+builtin command uses those reply shapes.
 
 ## Current Storage Model
 
@@ -88,25 +108,28 @@ The active kernel split is:
 - `ModuleSnapshot`: consistent read view used by logical multi-column-family
   reads
 - `ModuleWriteBatch`: one logical write batch per mutation
+- `CoreModule`: protocol-level builtin commands plus key lifecycle services
 - `HashModule`: hash semantics plus builtin command registration for hash
   commands
 
 Builtin module scope today:
 
-- `CoreModule`: protocol-level builtin commands such as `PING`
-- `HashModule`: builtin hash commands and semantics
+- `CoreModule`: exports `CoreKeyService` and `WholeKeyDeleteRegistry`
+- `HashModule`: exports `HashIndexingBridge`
 - no external ABI or dynamic module loading
 
-`StorageEngine` currently opens three RocksDB column families:
+`StorageEngine` currently opens four RocksDB column families:
 
 - `default`
 - `meta`
 - `hash`
+- `module`
 
-The logical model is still hash-only:
+The logical model is still hash-only for user-visible data:
 
 - the `meta` column family stores per-key metadata
 - the `hash` column family stores hash field/value entries
+- the `module` column family stores module-private keyspaces
 - the `default` column family is present because RocksDB requires it, but it is
   not part of the active `minikv` data model
 
@@ -118,33 +141,24 @@ Current metadata fields are:
 - `size`
 - `expire_at_ms`
 
-Current behavior is limited to hash operations:
+Current active lifecycle behavior:
 
-- `HSET` reads metadata and field existence through one `ModuleSnapshot` and
-  writes metadata plus field value through one `ModuleWriteBatch`
-- `HGETALL` reads metadata and scans the `hash` column family through one
-  `ModuleSnapshot`
-- `HDEL` reads metadata and field existence through one `ModuleSnapshot`,
-  deletes existing field keys, and updates or removes metadata through one
-  `ModuleWriteBatch`
+- live keys are visible to user commands
+- expired keys are hidden from user commands
+- tombstoned keys are hidden from user commands
+- tombstones use the sentinel `expire_at_ms = 1`
+- recreating an expired or tombstoned hash bumps its version
 
 ## Current Non-Supported Items
 
 The following are explicitly not supported in the current baseline:
 
-- non-hash data types such as string, list, set, zset, stream, or generic KV
-- complex reply shapes beyond simple string, integer, flat bulk-string array,
-  and error
+- non-hash user-visible data types such as string, list, set, zset, or stream
 - external module loading, external ABI support, or third-party module-defined
   commands
 - search functionality, including any `FT.*` command family
-
-Additional current limitations:
-
-- no TTL or expiration behavior is enforced
-- no cross-key atomicity exists
-- no transaction interface exists
-- no replication, clustering, or persistence modes beyond local RocksDB exist
+- transaction interfaces such as `MULTI`/`EXEC`
+- replication, clustering, or persistence modes beyond local RocksDB storage
 
 ## Consequences
 

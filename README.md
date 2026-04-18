@@ -1,10 +1,21 @@
 # MiniKV
 
-`minikv` is a small Redis-like prototype built on RocksDB. It currently focuses
-on a narrow hash-only command surface, exposes a network-only runtime, and now
-loads its command surface from builtin modules only. There is currently no
-external module ABI. The project is maintained here as a standalone project
-under `minikv/`.
+`minikv` is a small Redis-like prototype built on RocksDB. The current
+implementation runs as a single POSIX server process, accepts RESP requests
+over TCP, and loads all commands from builtin modules only. There is currently
+no external module ABI and no dynamic module loading.
+
+Current builtin modules:
+
+- `CoreModule`: `PING`, `TYPE`, `EXISTS`, `DEL`, `EXPIRE`, `TTL`, `PTTL`,
+  `PERSIST`
+- `HashModule`: `HSET`, `HGETALL`, `HDEL`
+
+Current user-visible data model:
+
+- hash keys only
+- per-key metadata with live, expired, and tombstone lifecycle states
+- module-private storage keyspaces in a shared RocksDB `module` column family
 
 ## Platform Note
 
@@ -13,7 +24,7 @@ under `minikv/`.
 - If your current system is macOS, do not treat the macOS host as the default
   build or validation environment.
 - On macOS, first locate or start a Linux Docker container, then run
-  configure/build/test inside that container.
+  configure, build, and test inside that container.
 - For representative container commands, see
   [docs/build.md#container-workflow](./docs/build.md#container-workflow).
 
@@ -31,7 +42,7 @@ refreshes a top-level `compile_commands.json` symlink so editors such as VS
 Code can discover it more easily.
 
 If you build inside the Linux container but run VS Code + clangd on the macOS
-host, rewrite the container paths for the host workspace with:
+host, rewrite the recorded container paths for the host workspace with:
 
 ```bash
 python3 tools/export_compile_commands.py
@@ -46,24 +57,31 @@ first:
   --rocksdb-reuse-build-dir /path/to/rocksdb/build-minikv
 ```
 
-The first form avoids downloading and recompiling RocksDB. The second form
-checks the local RocksDB commit against the committed bundle metadata and only
-refreshes the bundle when the source commit changed.
+The first form keeps the normal offline bundle-based workflow. The second form
+refreshes the committed bundle only when the source checkout commit differs
+from the metadata recorded in `third_party/rocksdb/linux-x86_64/BUNDLE_INFO.env`.
 
 ## Docs
 
-- [docs/README.md](./docs/README.md): documentation index
-- [docs/build.md](./docs/build.md): build and test workflow
+- [docs/README.md](./docs/README.md): documentation index and reading order
+- [docs/build.md](./docs/build.md): build, container, and validation workflow
 - [docs/rocksdb-bundle.md](./docs/rocksdb-bundle.md): committed RocksDB bundle
-  layout, update flow, and commit-detection rules
+  layout and refresh policy
 - [docs/getting-started.md](./docs/getting-started.md): codebase walkthrough
+- [docs/architecture.md](./docs/architecture.md): current architecture and
+  known design tensions
 
 ## Project Layout
 
 - `src/runtime/config.h`, `src/runtime/minikv.h`,
-  `src/network/network_server.h`: runtime and network entry headers
-- `src/`: implementation
+  `src/network/network_server.h`: current runtime and transport entry headers
+- `src/runtime/module/`: builtin module SPI, lifecycle manager, exports, and
+  module services
+- `src/core/`: protocol-level builtin commands and key lifecycle services
+- `src/types/hash/`: hash commands, hash storage semantics, and observer bridge
+- `src/`: implementation sources. There is no `include/minikv/` public header
+  tree yet in this standalone project
 - `tests/`: unit and integration tests
 - `tools/`: build, smoke, and maintenance scripts
 - `third_party/rocksdb/linux-x86_64/`: committed RocksDB headers, shared
-  library, and bundle metadata for Linux container builds
+  library, symlinks, and bundle metadata for Linux container builds

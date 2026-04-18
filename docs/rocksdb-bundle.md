@@ -3,13 +3,13 @@
 ## Purpose
 
 `minikv` keeps a committed Linux RocksDB bundle under
-`third_party/rocksdb/linux-x86_64/` so normal builds do not need to fetch
-RocksDB source or rebuild RocksDB from scratch every session.
+`third_party/rocksdb/linux-x86_64/` so the normal Linux-container workflow does
+not need to fetch RocksDB source or rebuild RocksDB from scratch every session.
 
 The bundle contains only the pieces `minikv` needs to compile and run:
 
 - public headers under `include/rocksdb/`
-- a stripped shared library under `lib/`
+- a shared library plus soname symlinks under `lib/`
 - commit and build metadata in `BUNDLE_INFO.env`
 
 ## Bundle Layout
@@ -18,8 +18,8 @@ Expected files:
 
 - `third_party/rocksdb/linux-x86_64/include/rocksdb/...`
 - `third_party/rocksdb/linux-x86_64/lib/librocksdb.so`
-- `third_party/rocksdb/linux-x86_64/lib/librocksdb.so.9`
-- `third_party/rocksdb/linux-x86_64/lib/librocksdb.so.<version>`
+- `third_party/rocksdb/linux-x86_64/lib/librocksdb.so.<soname>`
+- `third_party/rocksdb/linux-x86_64/lib/librocksdb.so.<full-version>`
 - `third_party/rocksdb/linux-x86_64/BUNDLE_INFO.env`
 
 `BUNDLE_INFO.env` records:
@@ -31,6 +31,9 @@ Expected files:
 - `ROCKSDB_BUNDLE_KIND`
 - `ROCKSDB_BUNDLE_PLATFORM`
 - `ROCKSDB_BUNDLE_CREATED_AT`
+
+The manifest is the source of truth for the committed bundle. It is separate
+from the fallback `MINIKV_ROCKSDB_TAG` used by `FetchContent`.
 
 ## Status And Refresh
 
@@ -64,26 +67,39 @@ with `ROCKSDB_SOURCE_COMMIT` in `BUNDLE_INFO.env`.
 
 - if the commit matches and the bundle files exist, the script exits without
   rebuilding
-- if the commit differs, it refreshes the committed headers and shared library
+- if the commit differs, the script refreshes the committed headers, shared
+  library, symlinks, and manifest
+
+Do not edit bundled RocksDB headers or libraries by hand. Refresh them through
+`tools/sync_rocksdb_bundle.sh`.
 
 ## Build Behavior
 
-`CMakeLists.txt` prefers the committed bundle when:
+`cmake/Dependencies.cmake` prefers the committed bundle when:
 
 - `MINIKV_USE_BUNDLED_ROCKSDB=ON`
+- the current build is Linux on `x86_64` or `amd64`
 - `MINIKV_ROCKSDB_BUNDLE_DIR` contains the expected headers and shared library
+
+When that path is available, CMake creates an imported shared-library target
+and sets the runtime rpath so `minikv_server` and the tests can find the
+bundled `librocksdb.so` inside the repository.
 
 `tools/build_linux.sh` follows this rule:
 
-- if `--rocksdb-source-dir` is not provided and the bundle exists, build against
-  the committed bundle
-- if `--rocksdb-source-dir` is provided, refresh the bundle only when the source
-  commit changed, then build against the bundle
-- if the bundle does not exist, fall back to the older source/fetch path
+- if `--rocksdb-source-dir` is not provided and the bundle exists, build
+  against the committed bundle
+- if `--rocksdb-source-dir` is provided, refresh the bundle only when the
+  source commit changed, then build against the bundle
+- if the bundle is incomplete and no source dir is provided, fail fast instead
+  of silently downloading dependencies
+- if the bundle is missing but a source dir is provided, fall back to the
+  source-based path
 
 ## Commit Policy
 
-When you intentionally change the RocksDB dependency that `minikv` should track:
+When you intentionally change the RocksDB dependency that `minikv` should
+track:
 
 1. Refresh the bundle.
 2. Commit the updated headers, shared library, symlinks, and `BUNDLE_INFO.env`.

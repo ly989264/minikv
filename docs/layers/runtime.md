@@ -4,10 +4,12 @@
 
 This layer is defined by:
 
+- `src/runtime/config.h`
 - `src/runtime/minikv.h`
 - `src/runtime/minikv.cc`
 
-It is the runtime owner for the current process. It is not a command API.
+It is the runtime owner for the current process. It is not a public command
+API.
 
 ## Responsibilities
 
@@ -19,33 +21,44 @@ It is the runtime owner for the current process. It is not a command API.
 
 The ownership graph is:
 
-`MiniKV -> Impl -> { StorageEngine, Scheduler, ModuleManager }`
+`MiniKV -> Impl -> { Config, StorageEngine, Scheduler, ModuleManager }`
 
-`Open()` initializes RocksDB first and only publishes the `MiniKV` instance
-after the storage open path succeeds.
+`MiniKV::Open()`:
 
-Current module loading behavior:
+1. allocates the implementation object
+2. opens RocksDB through `StorageEngine`
+3. constructs `Scheduler`
+4. constructs `ModuleManager`
+5. loads builtin modules
+6. publishes the runtime only after all of the above succeed
+
+Current builtin module loading behavior:
 
 - builtin modules only
 - fixed source-compiled module list
+- current load order is `CoreModule`, then `HashModule`
 - no external ABI
 - no runtime `.so` loading
 
 ## Current Boundary
 
-- `MiniKV` no longer exposes command execution helpers.
-- `MiniKV` no longer exposes typed hash helpers.
-- `MiniKV` exists to own shared runtime state used by the network layer.
-- module lifecycle is centralized under `ModuleManager`.
-- `NetworkServer` is the only supported external request entrypoint.
+- `MiniKV` does not expose command execution helpers
+- `MiniKV` does not expose typed hash helpers
+- `MiniKV` exists to own shared runtime state used by the network layer
+- module lifecycle is centralized under `ModuleManager`
+- `NetworkServer` is the only supported external request entrypoint
 
-The only intentional coupling between runtime and network is that
-`NetworkServer` can submit `Cmd` objects into the shared `Scheduler`.
+The current intentional coupling between runtime and network is:
+
+- `NetworkServer` can access the shared `Scheduler`
+- `NetworkServer` can read the shared `CommandRegistry` owned by
+  `ModuleManager`
 
 ## Current Design Conclusion
 
-The runtime layer is now narrow and explicit:
+The runtime layer is narrow and explicit:
 
+- configuration defaults live here
 - storage lifecycle lives here
 - builtin module lifecycle lives here
 - keyed command execution is owned by the scheduler

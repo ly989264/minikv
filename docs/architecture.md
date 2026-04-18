@@ -4,87 +4,110 @@
 
 This document captures the current implementation state of `minikv/` in this
 repository. It summarizes how the code is structured today, how requests flow
-through the system, what storage model is in use, and which architectural risks
-are already visible from the implementation.
+through the system, what storage model is in use, and which architectural
+tensions are already visible from the implementation.
 
 Related documents:
 
 - [README.md](../README.md)
 - [getting-started.md](./getting-started.md)
 - [build.md](./build.md)
-- [layers/runtime.md](./layers/runtime.md)
-- [layers/network.md](./layers/network.md)
-- [layers/command.md](./layers/command.md)
-- [layers/worker.md](./layers/worker.md)
-- [layers/codec.md](./layers/codec.md)
+- [module-lifecycle.md](./module-lifecycle.md)
+- [module-services.md](./module-services.md)
+- [hash-module-integration.md](./hash-module-integration.md)
 
-## Module Layering
+## Layering Summary
 
 The current implementation is organized as:
 
-`main -> NetworkServer -> RESP parser / runtime CommandRegistry -> Scheduler -> Worker -> builtin module command -> HashModule -> HashIndexingBridge / HashObserver -> ModuleSnapshot / ModuleIterator / ModuleWriteBatch -> StorageEngine -> RocksDB`
+`main -> MiniKV::Open -> ModuleManager -> NetworkServer -> RespParser -> CommandRegistry/CreateCmd -> Scheduler -> Worker -> builtin module command -> ModuleSnapshot / ModuleWriteBatch -> StorageEngine -> RocksDB`
 
-The responsibilities are:
+The main responsibilities are:
 
 - `src/app/main.cc`: parses process flags, opens `MiniKV`, starts
   `NetworkServer`
 - `src/runtime/minikv.h` and `src/runtime/minikv.cc`: runtime owner for
   storage, shared scheduler state, and builtin module loading
-- `src/network/network_server.h` and `src/network/`: TCP accept loop,
-  per-I/O-thread connection management, RESP parsing, response encoding, and
-  response reordering
+- `src/network/`: TCP accept loop, per-I/O-thread connection management, RESP
+  parsing, response encoding, response reordering, and connection metrics
 - `src/runtime/module/`: builtin module SPI, lifecycle, shared export
   registry, module service facades, module keyspace helpers, and background
   executor
-- `src/execution/command/`: converts parsed RESP parts into registered `Cmd`
-  objects
-- `src/execution/registry/`, `src/execution/reply/`,
-  `src/execution/scheduler/`, and `src/execution/worker/`: command registry,
-  reply helpers, scheduler, keyed workers, and execution coordination
-- `src/core/`: protocol-level builtin commands and current core key lifecycle
-  services
+- `src/execution/command/`, `src/execution/registry/`,
+  `src/execution/reply/`, `src/execution/scheduler/`, and
+  `src/execution/worker/`: command creation, command registry, reply tree,
+  scheduler, keyed workers, and execution coordination
+- `src/core/`: protocol-level builtin commands and key lifecycle services
 - `src/types/hash/`: hash builtin module, exported indexing bridge, observer
-  interface, and command registrations
+  interface, whole-key delete handling, and command registrations
 - `src/storage/engine/` and `src/storage/encoding/`: RocksDB integration,
-  snapshots, write batching, and key/metadata encoding rules
+  snapshots, write batching, and key encoding rules
 
 Public behavior is intentionally narrow today:
 
-- supported commands: `PING`, `HSET`, `HGETALL`, `HDEL`
+- supported commands:
+  `PING`, `TYPE`, `EXISTS`, `DEL`, `EXPIRE`, `TTL`, `PTTL`, `PERSIST`,
+  `HSET`, `HGETALL`, `HDEL`
 - supported data type: hash only
 - supported deployment shape: single process, POSIX server path
 - supported module shape: builtin modules only, with no external ABI
-- search wiring is still limited to prep infrastructure only; there is no
-  builtin `SearchModule` and no `FT.*` command family
+- search wiring is still limited to prep infrastructure; there is no builtin
+  `SearchModule` and no `FT.*` command family
 
 ## Request Lifecycle
 
 The request path is split into network I/O, keyed execution, and typed storage
 semantics:
 
-1. `NetworkServer::AcceptLoop()` accepts client sockets and assigns them to an
+1. `MiniKV::Open()` opens RocksDB, constructs the shared `Scheduler`, creates
+   `ModuleManager`, and initializes builtin modules.
+2. `NetworkServer::Start()` creates the listening socket, one accept thread,
+   and one or more I/O threads.
+3. `NetworkServer::AcceptLoop()` accepts client sockets and assigns them to an
    I/O thread in round-robin fashion.
-2. Each I/O thread polls its own connections, reads bytes, appends into the
+4. Each I/O thread polls its own connections, reads bytes into the
    per-connection read buffer, and uses `RespParser` to extract one or more
    RESP arrays.
-3. Parsed parts are converted into a concrete `Cmd` through the runtime
-   `CommandRegistry` owned by `ModuleManager`.
-4. `NetworkServer` assigns a per-connection request sequence and submits the
+5. Parsed parts are converted into a concrete `Cmd` through the shared runtime
+   `CommandRegistry`.
+6. The I/O thread assigns a per-connection request sequence and submits the
    task into the shared `Scheduler`.
-5. `Scheduler` picks a worker queue with round-robin plus ring probing.
-6. The worker thread acquires the striped key lock for `cmd->RouteKey()` and
-   executes `Cmd::Execute()`.
-7. Hash commands use `HashModule`, which reads through `ModuleSnapshot` and
-   stages writes through `ModuleWriteBatch`.
-8. Before commit, `HashModule` synchronously notifies any registered
-   `HashObserver` instances through the exported `HashIndexingBridge`.
-9. `StorageEngine` translates the committed write batch onto RocksDB column
-   families.
-10. The completion callback pushes the `CommandResponse` back into the owning
-   I/O thread's completed queue.
-11. The I/O thread reorders completions by request sequence, encodes the
+7. `Scheduler` picks a worker queue with round-robin plus ring probing.
+8. The worker thread acquires the striped lock set described by the command's
+   lock plan and executes `Cmd::Execute()`.
+9. Core commands use `CoreKeyService` for metadata lookup, TTL handling, and
+   whole-key delete dispatch. Hash commands use `HashModule`, which reads
+   through `ModuleSnapshot` and stages writes through `ModuleWriteBatch`.
+10. Before commit, `HashModule` synchronously notifies any registered
+    `HashObserver` instances through the exported `HashIndexingBridge`.
+11. `StorageEngine` translates the committed write batch onto RocksDB column
+    families.
+12. The completion callback pushes the `CommandResponse` back into the owning
+    I/O thread's completed queue.
+13. The I/O thread reorders completions by request sequence, encodes the
     response as RESP, and appends it to the connection's write buffer.
-12. The I/O thread flushes buffered responses back to the client socket.
+14. The I/O thread flushes buffered responses back to the client socket.
+
+## Module And Command Surface
+
+Builtin module load order is fixed:
+
+1. `CoreModule`
+2. `HashModule`
+
+Current command ownership:
+
+- `CoreModule`: `PING`, `TYPE`, `EXISTS`, `DEL`, `EXPIRE`, `TTL`, `PTTL`,
+  `PERSIST`
+- `HashModule`: `HSET`, `HGETALL`, `HDEL`
+
+Important current boundaries:
+
+- commands register only during `OnLoad()`
+- typed module exports may publish during `OnLoad()` and `OnStart()`
+- `CoreModule` exports `CoreKeyService` and `WholeKeyDeleteRegistry`
+- `HashModule` exports `HashIndexingBridge` and registers itself as the
+  `WholeKeyDeleteHandler` for hash keys
 
 ## Storage Model
 
@@ -95,33 +118,33 @@ semantics:
 - `hash`
 - `module`
 
-The data layout is driven by `KeyCodec`:
+The active encodings are:
 
-- meta key: `m| + key_length + user_key`
-- hash data key prefix: `h| + key_length + user_key + version`
+- meta key: `m| + uint32(key_length) + user_key`
+- hash data prefix:
+  `h| + uint32(key_length) + user_key + uint64(version)`
 - hash data key: `hash_prefix + field`
+- module keyspace prefix:
+  `uint32(module_name_length) + module_name + uint32(local_name_length) + local_name`
 
 Module-private storage uses `ModuleKeyspace` on top of the shared `module`
-column family:
+column family. Hash user data still lives in `meta` and `hash`.
 
-- keyspace identity is `module_name + local_keyspace_name`
-- the encoded key prefix is length-prefixed binary data rather than a dedicated
-  search-specific column family
-- modules read and write that state through keyspace-aware `ModuleSnapshot`,
-  `ModuleIterator`, and `ModuleWriteBatch` helpers instead of hard-coding
-  global `StorageColumnFamily` choices
-
-Current hash behavior is intentionally unchanged. `HashModule` still stores its
-user-visible data in `meta` and `hash`, while the `module` column family exists
-for module-private infrastructure such as future search metadata.
-
-The metadata payload currently contains:
+The current metadata payload contains:
 
 - `type`
 - `encoding`
 - `version`
 - `size`
 - `expire_at_ms`
+
+Those fields are active today:
+
+- `expire_at_ms = 0` means no TTL
+- `expire_at_ms = 1` is the logical delete tombstone sentinel
+- expired and tombstoned keys are treated as non-existent by user-visible
+  lookup commands
+- recreating an expired or tombstoned hash bumps its metadata version
 
 ## Concurrency Model
 
@@ -130,25 +153,31 @@ The concurrency design is based on keyed serialization:
 - connections are owned by I/O threads
 - command execution is owned by worker threads
 - requests are load-balanced across worker queues
-- requests for the same key serialize on one striped mutex derived from
-  `RouteKey()`
+- lock acquisition is driven by a command lock plan rather than by the network
+  layer
+
+Current lock-plan shapes:
+
+- `kNone`: `PING`
+- `kSingle`: most single-key commands such as `TYPE`, `EXPIRE`, `TTL`, `HSET`
+- `kMulti`: multi-key commands such as `EXISTS` and `DEL`
 
 Benefits of this model:
 
 - same-key updates avoid explicit coordination inside the hash module
-- multi-column-family reads no longer depend on ad hoc read ordering
+- multi-column-family reads use one snapshot inside a single command
 - network progress is decoupled from RocksDB calls
 - different keys can execute in parallel across workers
 - same-connection response order is preserved by the network reorder buffer
 
-Module-owned asynchronous maintenance now runs on one minimal background
-executor thread exposed through `ModuleBackgroundService`. This is intentionally
+Module-owned asynchronous maintenance runs on one minimal background executor
+thread exposed through `ModuleBackgroundService`. This is intentionally
 separate from request execution and is not a replacement for the keyed worker
 model.
 
 ## Architecture Audit
 
-### P1: Core Results Are Still RESP-Shaped
+### P1: Results Are Still RESP-Shaped
 
 `CommandResponse` is still close to RESP instead of being a transport-neutral
 domain result.
@@ -158,6 +187,16 @@ Impact:
 - the command layer is still biased toward the current RESP transport
 - a future non-RESP transport would likely need a second result-shaping layer
 
+### P1: Execution Metrics Still Depend On A Network-Layer Type
+
+`Scheduler` and `ModuleSchedulerView` currently reuse `MetricsSnapshot`, which
+is declared in `src/network/network_server.h`.
+
+Impact:
+
+- execution code depends on a transport-layer header for metric shape reuse
+- the current layering is workable, but not fully clean
+
 ### P2: Module SPI Is Still Builtin-Only
 
 `minikv` now has a builtin module SPI, but it is intentionally limited to
@@ -165,39 +204,30 @@ source-compiled modules loaded by `ModuleManager`.
 
 Impact:
 
-- command registration is now unified under one runtime registry
-- typed module exports now support narrow cross-module collaboration without
+- command registration is unified under one runtime registry
+- typed module exports support narrow cross-module collaboration without
   leaking private module pointers
 - there is still no external ABI, dynamic loading path, or third-party module
   contract
 
 ### P2: Search Prep Exists But Search Is Still Not Wired In
 
-The current code now exposes a hash-only indexing bridge plus synchronous hash
+The current code exposes a hash-only indexing bridge plus synchronous hash
 observer callbacks, but the actual search feature surface is still absent.
 
 Impact:
 
-- hash writes can now carry observer-side index updates in the same write batch
-- module-private search state can now live in one shared `module` column family
+- hash writes can carry observer-side index updates in the same write batch
+- module-private search state can live in the shared `module` column family
   behind `ModuleKeyspace`
-- future search modules can iterate that state through `ModuleIterator` and use
-  one minimal `BackgroundExecutor` without learning the kernel's column-family
-  layout
 - there is still no `SearchModule`
 - there are still no `FT.CREATE`, `FT.SEARCH`, or other `FT.*` commands
 
-### P2: Metadata Schema Still Signals Future Features That Are Not Active
+### P2: Module Storage Still Has A Compatibility Escape Hatch
 
-The metadata contains `version` and `expire_at_ms`, but the current hash
-implementation still uses `version = 1` and does not enforce TTL.
-
-### P3: Module Storage Boundary Still Has A Compatibility Escape Hatch
-
-PR-B added `ModuleKeyspace` plus keyspace-aware `ModuleSnapshot`,
-`ModuleIterator`, and `ModuleWriteBatch` helpers, but the module service layer
-still keeps raw `StorageColumnFamily` read/write entrypoints for the existing
-hash path.
+`ModuleKeyspace`, `ModuleIterator`, and keyspace-aware storage helpers now
+exist, but `ModuleWriteBatch` and `ModuleSnapshot` still expose raw
+`StorageColumnFamily` helpers for the existing hash path.
 
 Impact:
 
@@ -205,22 +235,19 @@ Impact:
   column-family access
 - `HashModule` and current hash observers remain compatible without changing
   their data layout
-- the kernel-to-module boundary is not fully narrowed yet, so a future cleanup
-  pass should retire the raw-CF helpers once remaining callers migrate
+- a future cleanup pass can retire the raw-CF entrypoints after remaining
+  callers migrate
 
 ### P3: Module Background Execution Is Intentionally Minimal
 
-PR-B introduced one shared `BackgroundExecutor` behind
-`ModuleBackgroundService`, but it is deliberately a small single-thread FIFO
-facility rather than a general-purpose thread pool.
+`BackgroundExecutor` behind `ModuleBackgroundService` is a small single-thread
+FIFO facility rather than a general-purpose thread pool.
 
 Impact:
 
-- this is enough for lightweight module maintenance and search-prep plumbing
+- it is sufficient for lightweight module maintenance
 - there is no cancellation, prioritization, per-module quota, or structured
   background task error reporting
-- future work should treat this as a narrow module helper, not as a second
-  request scheduler
 
 ### P3: Network Operability Is Still Minimal
 
