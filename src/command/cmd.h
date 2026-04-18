@@ -45,6 +45,30 @@ struct CmdInput {
 
 class Cmd {
  public:
+  class LockPlan {
+   public:
+    enum class Kind {
+      kNone,
+      kSingle,
+      kMulti,
+    };
+
+    Kind kind() const { return kind_; }
+    const std::string& single_key() const { return single_key_; }
+    const std::vector<std::string>& multi_keys() const { return multi_keys_; }
+
+   private:
+    void Clear();
+    void SetSingle(std::string key);
+    void SetCanonicalized(std::vector<std::string> keys);
+
+    Kind kind_ = Kind::kNone;
+    std::string single_key_;
+    std::vector<std::string> multi_keys_;
+
+    friend class Cmd;
+  };
+
   virtual ~Cmd() = default;
 
   rocksdb::Status Init(const CmdInput& input);
@@ -52,12 +76,16 @@ class Cmd {
 
   const std::string& Name() const { return name_; }
   CmdFlags Flags() const { return flags_; }
-  const std::string& RouteKey() const { return route_key_; }
+  const std::string& RouteKey() const { return lock_plan_.single_key(); }
+  const LockPlan& lock_plan() const { return lock_plan_; }
 
  protected:
   Cmd(std::string name, CmdFlags flags);
 
-  void SetRouteKey(std::string key) { route_key_ = std::move(key); }
+  void SetRouteKey(std::string key) { lock_plan_.SetSingle(std::move(key)); }
+  void SetRouteKeys(std::vector<std::string> keys) {
+    lock_plan_.SetCanonicalized(std::move(keys));
+  }
 
   static CommandResponse MakeStatus(rocksdb::Status status);
   static CommandResponse MakeSimpleString(std::string text);
@@ -75,7 +103,7 @@ class Cmd {
 
   std::string name_;
   CmdFlags flags_;
-  std::string route_key_;
+  LockPlan lock_plan_;
   bool initialized_ = false;
 };
 

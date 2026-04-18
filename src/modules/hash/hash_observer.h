@@ -15,6 +15,7 @@ struct HashMutation {
   enum class Type {
     kPutField,
     kDeleteFields,
+    kDeleteKey,
   };
 
   Type type = Type::kPutField;

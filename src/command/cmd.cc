@@ -1,13 +1,54 @@
 #include "command/cmd.h"
 
+#include <algorithm>
+
 namespace minikv {
+
+void Cmd::LockPlan::Clear() {
+  kind_ = Kind::kNone;
+  single_key_.clear();
+  multi_keys_.clear();
+}
+
+void Cmd::LockPlan::SetSingle(std::string key) {
+  kind_ = Kind::kSingle;
+  single_key_ = std::move(key);
+  multi_keys_.clear();
+}
+
+void Cmd::LockPlan::SetCanonicalized(std::vector<std::string> keys) {
+  if (keys.empty()) {
+    Clear();
+    return;
+  }
+
+  if (keys.size() == 1) {
+    SetSingle(std::move(keys.front()));
+    return;
+  }
+
+  std::sort(keys.begin(), keys.end());
+  keys.erase(std::unique(keys.begin(), keys.end()), keys.end());
+  if (keys.empty()) {
+    Clear();
+    return;
+  }
+  if (keys.size() == 1) {
+    SetSingle(std::move(keys.front()));
+    return;
+  }
+
+  kind_ = Kind::kMulti;
+  single_key_.clear();
+  multi_keys_ = std::move(keys);
+}
 
 Cmd::Cmd(std::string name, CmdFlags flags)
     : name_(std::move(name)), flags_(flags) {}
 
 rocksdb::Status Cmd::Init(const CmdInput& input) {
   initialized_ = false;
-  route_key_.clear();
+  lock_plan_.Clear();
 
   rocksdb::Status status = DoInitial(input);
   if (status.ok()) {

@@ -47,6 +47,15 @@ void ExpectBulkString(const minikv::ReplyNode& reply,
   EXPECT_EQ(reply.string(), value);
 }
 
+void ExpectLockPlan(const minikv::Cmd::LockPlan& plan,
+                    minikv::Cmd::LockPlan::Kind kind,
+                    const std::string& single_key,
+                    const std::vector<std::string>& multi_keys) {
+  EXPECT_EQ(plan.kind(), kind);
+  EXPECT_EQ(plan.single_key(), single_key);
+  EXPECT_EQ(plan.multi_keys(), multi_keys);
+}
+
 class TestCmd : public minikv::Cmd {
  public:
   TestCmd()
@@ -59,6 +68,9 @@ class TestCmd : public minikv::Cmd {
     status_to_return_ = std::move(status);
   }
   void SetRouteKeyToExpose(const std::string& key) { SetRouteKey(key); }
+  void SetRouteKeysToExpose(std::vector<std::string> keys) {
+    SetRouteKeys(std::move(keys));
+  }
 
  protected:
   minikv::CommandResponse MakeStatusPublic(rocksdb::Status status) {
@@ -176,6 +188,12 @@ TEST_F(ModuleRuntimeTest, FindsRegisteredCommandsByName) {
   EXPECT_EQ(exists->owner_module, "core");
   ExpectFlags(exists->flags, true, false, true, false);
 
+  const minikv::CmdRegistration* del = registry().Find("DEL");
+  ASSERT_NE(del, nullptr);
+  EXPECT_EQ(del->name, "DEL");
+  EXPECT_EQ(del->owner_module, "core");
+  ExpectFlags(del->flags, false, true, false, true);
+
   const minikv::CmdRegistration* hset = registry().Find("HSET");
   ASSERT_NE(hset, nullptr);
   EXPECT_EQ(hset->name, "HSET");
@@ -206,6 +224,7 @@ TEST_F(ModuleRuntimeTest, CreatesCommandsFromRespParts) {
   ASSERT_NE(ping, nullptr);
   EXPECT_EQ(ping->Name(), "PING");
   EXPECT_TRUE(ping->RouteKey().empty());
+  ExpectLockPlan(ping->lock_plan(), minikv::Cmd::LockPlan::Kind::kNone, "", {});
   ExpectFlags(ping->Flags(), true, false, true, false);
 
   std::unique_ptr<minikv::Cmd> type;
@@ -213,15 +232,35 @@ TEST_F(ModuleRuntimeTest, CreatesCommandsFromRespParts) {
   ASSERT_NE(type, nullptr);
   EXPECT_EQ(type->Name(), "TYPE");
   EXPECT_EQ(type->RouteKey(), "user:1");
+  ExpectLockPlan(type->lock_plan(), minikv::Cmd::LockPlan::Kind::kSingle,
+                 "user:1", {});
   ExpectFlags(type->Flags(), true, false, true, false);
 
   std::unique_ptr<minikv::Cmd> exists;
   ASSERT_TRUE(
-      minikv::CreateCmd(registry(), {"EXISTS", "user:1"}, &exists).ok());
+      minikv::CreateCmd(registry(),
+                        {"EXISTS", "user:3", "user:1", "user:2", "user:1"},
+                        &exists)
+          .ok());
   ASSERT_NE(exists, nullptr);
   EXPECT_EQ(exists->Name(), "EXISTS");
-  EXPECT_EQ(exists->RouteKey(), "user:1");
+  EXPECT_TRUE(exists->RouteKey().empty());
+  ExpectLockPlan(exists->lock_plan(), minikv::Cmd::LockPlan::Kind::kMulti, "",
+                 {"user:1", "user:2", "user:3"});
   ExpectFlags(exists->Flags(), true, false, true, false);
+
+  std::unique_ptr<minikv::Cmd> del;
+  ASSERT_TRUE(minikv::CreateCmd(registry(),
+                                {"DEL", "user:4", "user:2", "user:3",
+                                 "user:2"},
+                                &del)
+                  .ok());
+  ASSERT_NE(del, nullptr);
+  EXPECT_EQ(del->Name(), "DEL");
+  EXPECT_TRUE(del->RouteKey().empty());
+  ExpectLockPlan(del->lock_plan(), minikv::Cmd::LockPlan::Kind::kMulti, "",
+                 {"user:2", "user:3", "user:4"});
+  ExpectFlags(del->Flags(), false, true, false, true);
 
   std::unique_ptr<minikv::Cmd> hset;
   ASSERT_TRUE(
@@ -230,6 +269,8 @@ TEST_F(ModuleRuntimeTest, CreatesCommandsFromRespParts) {
   ASSERT_NE(hset, nullptr);
   EXPECT_EQ(hset->Name(), "HSET");
   EXPECT_EQ(hset->RouteKey(), "user:1");
+  ExpectLockPlan(hset->lock_plan(), minikv::Cmd::LockPlan::Kind::kSingle,
+                 "user:1", {});
   ExpectFlags(hset->Flags(), false, true, true, false);
 
   std::unique_ptr<minikv::Cmd> lower;
@@ -290,11 +331,9 @@ TEST_F(ModuleRuntimeTest, RejectsBadArgumentsAndNullOutputs) {
   ASSERT_TRUE(status.IsInvalidArgument());
   EXPECT_NE(status.ToString().find("missing key"), std::string::npos);
 
-  status =
-      minikv::CreateCmd(registry(), {"EXISTS", "user:1", "extra"}, &cmd);
+  status = minikv::CreateCmd(registry(), {"DEL"}, &cmd);
   ASSERT_TRUE(status.IsInvalidArgument());
-  EXPECT_NE(status.ToString().find("EXISTS takes no extra arguments"),
-            std::string::npos);
+  EXPECT_NE(status.ToString().find("missing key"), std::string::npos);
 }
 
 TEST(CmdBaseTest, ExecuteRejectsUninitializedCommand) {
@@ -306,18 +345,30 @@ TEST(CmdBaseTest, ExecuteRejectsUninitializedCommand) {
             std::string::npos);
 }
 
-TEST(CmdBaseTest, FailedInitClearsPreviousRouteKey) {
+TEST(CmdBaseTest, FailedInitClearsPreviousLockPlan) {
   TestCmd cmd;
   minikv::CmdInput input;
   input.has_key = true;
   input.key = "route:1";
   ASSERT_TRUE(cmd.Init(input).ok());
   EXPECT_EQ(cmd.RouteKey(), "route:1");
+  ExpectLockPlan(cmd.lock_plan(), minikv::Cmd::LockPlan::Kind::kSingle,
+                 "route:1", {});
 
   cmd.FailInit(true);
   rocksdb::Status status = cmd.Init(input);
   ASSERT_TRUE(status.IsInvalidArgument());
   EXPECT_TRUE(cmd.RouteKey().empty());
+  ExpectLockPlan(cmd.lock_plan(), minikv::Cmd::LockPlan::Kind::kNone, "", {});
+}
+
+TEST(CmdBaseTest, SetRouteKeysCanonicalizesDuplicates) {
+  TestCmd cmd;
+  ASSERT_TRUE(cmd.Init(minikv::CmdInput{}).ok());
+
+  cmd.SetRouteKeysToExpose({"user:3", "user:1", "user:2", "user:1"});
+  ExpectLockPlan(cmd.lock_plan(), minikv::Cmd::LockPlan::Kind::kMulti, "",
+                 {"user:1", "user:2", "user:3"});
 }
 
 TEST(CmdBaseTest, SharedResponseBuildersProduceExpectedShapes) {
@@ -352,6 +403,8 @@ TEST_F(ModuleRuntimeTest, EmptyStringKeyRemainsValidForHashCommands) {
   ASSERT_NE(cmd, nullptr);
   EXPECT_EQ(cmd->RouteKey(), "");
   EXPECT_EQ(cmd->Name(), "HGETALL");
+  ExpectLockPlan(cmd->lock_plan(), minikv::Cmd::LockPlan::Kind::kSingle, "",
+                 {});
 }
 
 TEST_F(ModuleRuntimeTest, PingExecuteReturnsPong) {
@@ -374,12 +427,12 @@ TEST_F(ModuleRuntimeTest, TypeAndExistsExecuteAgainstEngine) {
   ExpectBulkString(response.reply, "hash");
 
   std::unique_ptr<minikv::Cmd> exists =
-      CreateFromParts({"EXISTS", "user:type"});
+      CreateFromParts({"EXISTS", "user:type", "user:type", "missing"});
   ASSERT_NE(exists, nullptr);
   response = exists->Execute();
   ASSERT_TRUE(response.status.ok());
   ASSERT_TRUE(response.reply.IsInteger());
-  EXPECT_EQ(response.reply.integer(), 1);
+  EXPECT_EQ(response.reply.integer(), 2);
 }
 
 TEST_F(ModuleRuntimeTest, HSetAndHGetAllExecuteAgainstEngine) {
@@ -449,12 +502,57 @@ TEST_F(ModuleRuntimeTest, TypeAndExistsOnMissingKeyReturnNoneAndZero) {
   ExpectBulkString(response.reply, "none");
 
   std::unique_ptr<minikv::Cmd> exists =
-      CreateFromParts({"EXISTS", "missing"});
+      CreateFromParts({"EXISTS", "missing", "missing"});
   ASSERT_NE(exists, nullptr);
   response = exists->Execute();
   ASSERT_TRUE(response.status.ok());
   ASSERT_TRUE(response.reply.IsInteger());
   EXPECT_EQ(response.reply.integer(), 0);
+}
+
+TEST_F(ModuleRuntimeTest, DelExecuteRemovesMultipleKeys) {
+  ASSERT_TRUE(hash_module_->PutField("user:del:1", "name", "alice", nullptr).ok());
+  ASSERT_TRUE(hash_module_->PutField("user:del:2", "name", "bob", nullptr).ok());
+
+  std::unique_ptr<minikv::Cmd> del = CreateFromParts(
+      {"DEL", "user:del:1", "user:del:2", "missing"});
+  ASSERT_NE(del, nullptr);
+
+  minikv::CommandResponse response = del->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsInteger());
+  EXPECT_EQ(response.reply.integer(), 2);
+
+  std::unique_ptr<minikv::Cmd> type_first =
+      CreateFromParts({"TYPE", "user:del:1"});
+  std::unique_ptr<minikv::Cmd> type_second =
+      CreateFromParts({"TYPE", "user:del:2"});
+  response = type_first->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ExpectBulkString(response.reply, "none");
+  response = type_second->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ExpectBulkString(response.reply, "none");
+}
+
+TEST_F(ModuleRuntimeTest, ExistsAndDelDuplicateKeySemanticsFollowRedisStyle) {
+  ASSERT_TRUE(hash_module_->PutField("user:dup", "name", "alice", nullptr).ok());
+
+  std::unique_ptr<minikv::Cmd> exists =
+      CreateFromParts({"EXISTS", "user:dup", "user:dup", "missing"});
+  ASSERT_NE(exists, nullptr);
+  minikv::CommandResponse response = exists->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsInteger());
+  EXPECT_EQ(response.reply.integer(), 2);
+
+  std::unique_ptr<minikv::Cmd> del =
+      CreateFromParts({"DEL", "user:dup", "user:dup", "missing"});
+  ASSERT_NE(del, nullptr);
+  response = del->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsInteger());
+  EXPECT_EQ(response.reply.integer(), 1);
 }
 
 }  // namespace

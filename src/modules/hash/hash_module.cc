@@ -210,6 +210,16 @@ rocksdb::Status HashModule::OnStart(ModuleServices& services) {
   if (key_service_ == nullptr) {
     return rocksdb::Status::InvalidArgument("core key service is unavailable");
   }
+  delete_registry_ = services.exports().Find<WholeKeyDeleteRegistry>(
+      kWholeKeyDeleteRegistryQualifiedExportName);
+  if (delete_registry_ == nullptr) {
+    return rocksdb::Status::InvalidArgument(
+        "whole-key delete registry is unavailable");
+  }
+  rocksdb::Status status = delete_registry_->RegisterHandler(this);
+  if (!status.ok()) {
+    return status;
+  }
 
   started_ = true;
   services.metrics().SetCounter("worker_count",
@@ -220,6 +230,7 @@ rocksdb::Status HashModule::OnStart(ModuleServices& services) {
 void HashModule::OnStop(ModuleServices& /*services*/) {
   observers_.clear();
   started_ = false;
+  delete_registry_ = nullptr;
   key_service_ = nullptr;
   services_ = nullptr;
 }
@@ -450,6 +461,73 @@ rocksdb::Status HashModule::DeleteFields(const std::string& key,
     *deleted = status.ok() ? removed : 0;
   }
   return status;
+}
+
+rocksdb::Status HashModule::DeleteWholeKey(ModuleSnapshot* snapshot,
+                                           ModuleWriteBatch* write_batch,
+                                           const std::string& key,
+                                           const KeyLookup& lookup) {
+  rocksdb::Status ready_status = EnsureReady();
+  if (!ready_status.ok()) {
+    return ready_status;
+  }
+  if (snapshot == nullptr) {
+    return rocksdb::Status::InvalidArgument("module snapshot is unavailable");
+  }
+  if (write_batch == nullptr) {
+    return rocksdb::Status::InvalidArgument("module write batch is unavailable");
+  }
+
+  rocksdb::Status status = RequireHashEncoding(lookup);
+  if (!status.ok()) {
+    return status;
+  }
+  if (!lookup.exists) {
+    return rocksdb::Status::OK();
+  }
+
+  KeyMetadata before = lookup.metadata;
+  std::vector<std::string> removed_fields;
+  const std::string prefix =
+      KeyCodec::EncodeHashDataPrefix(key, lookup.metadata.version);
+  status = snapshot->ScanPrefix(
+      StorageColumnFamily::kHash, prefix,
+      [&removed_fields, &prefix](const rocksdb::Slice& encoded_key,
+                                 const rocksdb::Slice& /*value_slice*/) {
+        std::string field;
+        if (!KeyCodec::ExtractFieldFromHashDataKey(encoded_key, prefix, &field)) {
+          return false;
+        }
+        removed_fields.push_back(std::move(field));
+        return true;
+      });
+  if (!status.ok()) {
+    return status;
+  }
+
+  for (const auto& field : removed_fields) {
+    status = write_batch->Delete(StorageColumnFamily::kHash,
+                                 KeyCodec::EncodeHashDataKey(
+                                     key, before.version, field));
+    if (!status.ok()) {
+      return status;
+    }
+  }
+  status = key_service_->DeleteMetadata(write_batch, key);
+  if (!status.ok()) {
+    return status;
+  }
+
+  HashMutation mutation;
+  mutation.type = HashMutation::Type::kDeleteKey;
+  mutation.key = key;
+  mutation.deleted_fields = removed_fields;
+  mutation.before = before;
+  mutation.after = before;
+  mutation.after.size = 0;
+  mutation.existed_before = true;
+  mutation.exists_after = false;
+  return NotifyObservers(mutation, write_batch);
 }
 
 rocksdb::Status HashModule::EnsureReady() const {

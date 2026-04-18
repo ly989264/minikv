@@ -35,18 +35,24 @@ struct Gate {
 
 class BlockingCmd : public minikv::Cmd {
  public:
-  BlockingCmd(std::string route_key, Tracker* tracker, Gate* gate,
+  BlockingCmd(std::vector<std::string> route_keys, bool has_lock_keys,
+              Tracker* tracker, Gate* gate,
               std::promise<void>* entered = nullptr)
       : Cmd("BLOCK", minikv::CmdFlags::kWrite),
-        route_key_(std::move(route_key)),
+        route_keys_(std::move(route_keys)),
+        has_lock_keys_(has_lock_keys),
         tracker_(tracker),
         gate_(gate),
         entered_(entered) {}
 
  private:
-  rocksdb::Status DoInitial(const minikv::CmdInput& input) override {
-    if (input.has_key) {
-      SetRouteKey(input.key);
+  rocksdb::Status DoInitial(const minikv::CmdInput& /*input*/) override {
+    if (has_lock_keys_) {
+      if (route_keys_.size() == 1) {
+        SetRouteKey(route_keys_.front());
+      } else {
+        SetRouteKeys(route_keys_);
+      }
     }
     return rocksdb::Status::OK();
   }
@@ -76,7 +82,8 @@ class BlockingCmd : public minikv::Cmd {
     return MakeSimpleString("OK");
   }
 
-  std::string route_key_;
+  std::vector<std::string> route_keys_;
+  bool has_lock_keys_ = false;
   Tracker* tracker_;
   Gate* gate_;
   std::promise<void>* entered_;
@@ -85,27 +92,44 @@ class BlockingCmd : public minikv::Cmd {
 std::unique_ptr<minikv::Cmd> MakeBlockingCmd(const std::string& route_key,
                                              Tracker* tracker, Gate* gate,
                                              std::promise<void>* entered = nullptr) {
-  auto cmd =
-      std::make_unique<BlockingCmd>(route_key, tracker, gate, entered);
-  minikv::CmdInput input;
-  if (!route_key.empty()) {
-    input.has_key = true;
-    input.key = route_key;
-  }
-  EXPECT_TRUE(cmd->Init(input).ok());
+  auto cmd = std::make_unique<BlockingCmd>(
+      std::vector<std::string>{route_key}, true, tracker, gate, entered);
+  EXPECT_TRUE(cmd->Init(minikv::CmdInput{}).ok());
+  return cmd;
+}
+
+std::unique_ptr<minikv::Cmd> MakeBlockingCmd(
+    std::vector<std::string> route_keys, Tracker* tracker, Gate* gate,
+    std::promise<void>* entered = nullptr) {
+  auto cmd = std::make_unique<BlockingCmd>(std::move(route_keys), true, tracker,
+                                           gate, entered);
+  EXPECT_TRUE(cmd->Init(minikv::CmdInput{}).ok());
+  return cmd;
+}
+
+std::unique_ptr<minikv::Cmd> MakeNoKeyBlockingCmd(
+    Tracker* tracker, Gate* gate, std::promise<void>* entered = nullptr) {
+  auto cmd = std::make_unique<BlockingCmd>(std::vector<std::string>{}, false,
+                                           tracker, gate, entered);
+  EXPECT_TRUE(cmd->Init(minikv::CmdInput{}).ok());
   return cmd;
 }
 
 class QuickCmd : public minikv::Cmd {
  public:
-  explicit QuickCmd(std::string route_key)
+  QuickCmd(std::vector<std::string> route_keys, bool has_lock_keys)
       : Cmd("QUICK", minikv::CmdFlags::kRead),
-        route_key_(std::move(route_key)) {}
+        route_keys_(std::move(route_keys)),
+        has_lock_keys_(has_lock_keys) {}
 
  private:
-  rocksdb::Status DoInitial(const minikv::CmdInput& input) override {
-    if (input.has_key) {
-      SetRouteKey(input.key);
+  rocksdb::Status DoInitial(const minikv::CmdInput& /*input*/) override {
+    if (has_lock_keys_) {
+      if (route_keys_.size() == 1) {
+        SetRouteKey(route_keys_.front());
+      } else {
+        SetRouteKeys(route_keys_);
+      }
     }
     return rocksdb::Status::OK();
   }
@@ -114,17 +138,26 @@ class QuickCmd : public minikv::Cmd {
     return MakeSimpleString("OK");
   }
 
-  std::string route_key_;
+  std::vector<std::string> route_keys_;
+  bool has_lock_keys_ = false;
 };
 
 std::unique_ptr<minikv::Cmd> MakeQuickCmd(const std::string& route_key) {
-  auto cmd = std::make_unique<QuickCmd>(route_key);
-  minikv::CmdInput input;
-  if (!route_key.empty()) {
-    input.has_key = true;
-    input.key = route_key;
-  }
-  EXPECT_TRUE(cmd->Init(input).ok());
+  auto cmd =
+      std::make_unique<QuickCmd>(std::vector<std::string>{route_key}, true);
+  EXPECT_TRUE(cmd->Init(minikv::CmdInput{}).ok());
+  return cmd;
+}
+
+std::unique_ptr<minikv::Cmd> MakeQuickCmd(std::vector<std::string> route_keys) {
+  auto cmd = std::make_unique<QuickCmd>(std::move(route_keys), true);
+  EXPECT_TRUE(cmd->Init(minikv::CmdInput{}).ok());
+  return cmd;
+}
+
+std::unique_ptr<minikv::Cmd> MakeNoKeyQuickCmd() {
+  auto cmd = std::make_unique<QuickCmd>(std::vector<std::string>{}, false);
+  EXPECT_TRUE(cmd->Init(minikv::CmdInput{}).ok());
   return cmd;
 }
 
@@ -299,7 +332,7 @@ TEST(SchedulerTest, DifferentKeysCanExecuteInParallel) {
   second_done.get_future().wait();
 }
 
-TEST(SchedulerTest, EmptyRouteKeyDoesNotTakeKeyLock) {
+TEST(SchedulerTest, NoKeyCommandsDoNotTakeKeyLock) {
   minikv::Scheduler scheduler(2, 4);
   Tracker tracker;
   Gate first_gate;
@@ -308,7 +341,7 @@ TEST(SchedulerTest, EmptyRouteKeyDoesNotTakeKeyLock) {
   std::promise<void> second_done;
 
   ASSERT_TRUE(scheduler.Submit(
-                          MakeBlockingCmd("", &tracker, &first_gate),
+                          MakeNoKeyBlockingCmd(&tracker, &first_gate),
                           [&](minikv::CommandResponse response) {
                             ASSERT_TRUE(response.status.ok());
                             first_done.set_value();
@@ -318,7 +351,7 @@ TEST(SchedulerTest, EmptyRouteKeyDoesNotTakeKeyLock) {
                       std::chrono::seconds(1)));
 
   ASSERT_TRUE(scheduler.Submit(
-                          MakeBlockingCmd("", &tracker, &second_gate),
+                          MakeNoKeyBlockingCmd(&tracker, &second_gate),
                           [&](minikv::CommandResponse response) {
                             ASSERT_TRUE(response.status.ok());
                             second_done.set_value();
@@ -341,6 +374,49 @@ TEST(SchedulerTest, EmptyRouteKeyDoesNotTakeKeyLock) {
 
   first_done.get_future().wait();
   second_done.get_future().wait();
+}
+
+TEST(SchedulerTest, EmptyStringKeyStillTakesSingleKeyLock) {
+  minikv::Scheduler scheduler(2, 4);
+  Tracker tracker;
+  Gate blocked_gate;
+  std::promise<void> blocked_entered;
+  std::future<void> blocked_entered_future = blocked_entered.get_future();
+  std::promise<void> blocked_done;
+  std::future<void> blocked_done_future = blocked_done.get_future();
+  std::promise<void> quick_done;
+  std::future<void> quick_done_future = quick_done.get_future();
+
+  ASSERT_TRUE(scheduler.Submit(
+                          MakeBlockingCmd("", &tracker, &blocked_gate,
+                                          &blocked_entered),
+                          [&](minikv::CommandResponse response) {
+                            ASSERT_TRUE(response.status.ok());
+                            blocked_done.set_value();
+                          })
+                  .ok());
+  blocked_entered_future.wait();
+
+  ASSERT_TRUE(scheduler.Submit(
+                          MakeQuickCmd(""),
+                          [&](minikv::CommandResponse response) {
+                            ASSERT_TRUE(response.status.ok());
+                            quick_done.set_value();
+                          })
+                  .ok());
+
+  EXPECT_EQ(quick_done_future.wait_for(std::chrono::milliseconds(150)),
+            std::future_status::timeout);
+
+  {
+    std::lock_guard<std::mutex> lock(tracker.mutex);
+    blocked_gate.release = true;
+  }
+  tracker.cv.notify_all();
+
+  blocked_done_future.wait();
+  EXPECT_EQ(quick_done_future.wait_for(std::chrono::seconds(1)),
+            std::future_status::ready);
 }
 
 TEST(SchedulerTest, DifferentKeyQuickTaskCompletesWhileHotKeyIsBlocked) {
@@ -424,6 +500,141 @@ TEST(SchedulerTest, SameKeyQuickTaskWaitsUntilBlockedTaskReleasesLock) {
   blocked_done_future.wait();
   EXPECT_EQ(quick_done_future.wait_for(std::chrono::seconds(1)),
             std::future_status::ready);
+}
+
+TEST(SchedulerTest,
+     OverlappingMultiKeyQuickTaskWaitsUntilBlockedTaskReleasesLocks) {
+  minikv::Scheduler scheduler(2, 4);
+  Tracker tracker;
+  Gate blocked_gate;
+  std::promise<void> blocked_entered;
+  std::future<void> blocked_entered_future = blocked_entered.get_future();
+  std::promise<void> blocked_done;
+  std::future<void> blocked_done_future = blocked_done.get_future();
+  std::promise<void> quick_done;
+  std::future<void> quick_done_future = quick_done.get_future();
+
+  ASSERT_TRUE(scheduler.Submit(
+                          MakeBlockingCmd(
+                              std::vector<std::string>{"user:a", "user:b"},
+                              &tracker, &blocked_gate, &blocked_entered),
+                          [&](minikv::CommandResponse response) {
+                            ASSERT_TRUE(response.status.ok());
+                            blocked_done.set_value();
+                          })
+                  .ok());
+  blocked_entered_future.wait();
+
+  ASSERT_TRUE(scheduler.Submit(
+                          MakeQuickCmd(
+                              std::vector<std::string>{"user:b", "user:a"}),
+                          [&](minikv::CommandResponse response) {
+                            ASSERT_TRUE(response.status.ok());
+                            quick_done.set_value();
+                          })
+                  .ok());
+
+  EXPECT_EQ(quick_done_future.wait_for(std::chrono::milliseconds(150)),
+            std::future_status::timeout);
+
+  {
+    std::lock_guard<std::mutex> lock(tracker.mutex);
+    blocked_gate.release = true;
+  }
+  tracker.cv.notify_all();
+
+  blocked_done_future.wait();
+  EXPECT_EQ(quick_done_future.wait_for(std::chrono::seconds(1)),
+            std::future_status::ready);
+}
+
+TEST(SchedulerTest,
+     PartiallyOverlappingMultiKeyQuickTaskWaitsUntilBlockedTaskReleasesLocks) {
+  minikv::Scheduler scheduler(2, 4);
+  Tracker tracker;
+  Gate blocked_gate;
+  std::promise<void> blocked_entered;
+  std::future<void> blocked_entered_future = blocked_entered.get_future();
+  std::promise<void> blocked_done;
+  std::future<void> blocked_done_future = blocked_done.get_future();
+  std::promise<void> quick_done;
+  std::future<void> quick_done_future = quick_done.get_future();
+
+  ASSERT_TRUE(scheduler.Submit(
+                          MakeBlockingCmd(
+                              std::vector<std::string>{"user:a", "user:b"},
+                              &tracker, &blocked_gate, &blocked_entered),
+                          [&](minikv::CommandResponse response) {
+                            ASSERT_TRUE(response.status.ok());
+                            blocked_done.set_value();
+                          })
+                  .ok());
+  blocked_entered_future.wait();
+
+  ASSERT_TRUE(scheduler.Submit(
+                          MakeQuickCmd(
+                              std::vector<std::string>{"user:b", "user:c"}),
+                          [&](minikv::CommandResponse response) {
+                            ASSERT_TRUE(response.status.ok());
+                            quick_done.set_value();
+                          })
+                  .ok());
+
+  EXPECT_EQ(quick_done_future.wait_for(std::chrono::milliseconds(150)),
+            std::future_status::timeout);
+
+  {
+    std::lock_guard<std::mutex> lock(tracker.mutex);
+    blocked_gate.release = true;
+  }
+  tracker.cv.notify_all();
+
+  blocked_done_future.wait();
+  EXPECT_EQ(quick_done_future.wait_for(std::chrono::seconds(1)),
+            std::future_status::ready);
+}
+
+TEST(SchedulerTest,
+     DisjointMultiKeyQuickTaskCompletesWhileOtherKeySetIsBlocked) {
+  minikv::Scheduler scheduler(2, 4);
+  Tracker tracker;
+  Gate blocked_gate;
+  std::promise<void> blocked_entered;
+  std::future<void> blocked_entered_future = blocked_entered.get_future();
+  std::promise<void> blocked_done;
+  std::future<void> blocked_done_future = blocked_done.get_future();
+  std::promise<void> quick_done;
+  std::future<void> quick_done_future = quick_done.get_future();
+
+  ASSERT_TRUE(scheduler.Submit(
+                          MakeBlockingCmd(
+                              std::vector<std::string>{"user:a", "user:b"},
+                              &tracker, &blocked_gate, &blocked_entered),
+                          [&](minikv::CommandResponse response) {
+                            ASSERT_TRUE(response.status.ok());
+                            blocked_done.set_value();
+                          })
+                  .ok());
+  blocked_entered_future.wait();
+
+  ASSERT_TRUE(scheduler.Submit(
+                          MakeQuickCmd(
+                              std::vector<std::string>{"user:c", "user:d"}),
+                          [&](minikv::CommandResponse response) {
+                            ASSERT_TRUE(response.status.ok());
+                            quick_done.set_value();
+                          })
+                  .ok());
+
+  EXPECT_EQ(quick_done_future.wait_for(std::chrono::milliseconds(200)),
+            std::future_status::ready);
+
+  {
+    std::lock_guard<std::mutex> lock(tracker.mutex);
+    blocked_gate.release = true;
+  }
+  tracker.cv.notify_all();
+  blocked_done_future.wait();
 }
 
 TEST(SchedulerTest, MetricsSnapshotTracksBacklogRejectionsAndInflight) {

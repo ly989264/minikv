@@ -97,8 +97,19 @@ size_t Worker::backlog() const { return queue_.Backlog(); }
 
 CommandResponse ExecuteCommand(KeyLockTable* key_lock_table, Cmd* cmd) {
   KeyLockTable::Guard guard;
+  KeyLockTable::MultiGuard multi_guard;
   if (key_lock_table != nullptr) {
-    guard = key_lock_table->Acquire(cmd->RouteKey());
+    switch (cmd->lock_plan().kind()) {
+      case Cmd::LockPlan::Kind::kNone:
+        break;
+      case Cmd::LockPlan::Kind::kSingle:
+        guard = key_lock_table->Acquire(cmd->lock_plan().single_key());
+        break;
+      case Cmd::LockPlan::Kind::kMulti:
+        multi_guard =
+            key_lock_table->AcquireMulti(cmd->lock_plan().multi_keys());
+        break;
+    }
   }
 
   try {

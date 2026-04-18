@@ -12,12 +12,36 @@ KeyLockTable::KeyLockTable(size_t stripe_count) {
   }
 }
 
+size_t KeyLockTable::StripeIndex(const std::string& key) const {
+  return std::hash<std::string>{}(key) % stripes_.size();
+}
+
 KeyLockTable::Guard KeyLockTable::Acquire(const std::string& key) {
-  if (key.empty()) {
-    return Guard();
+  return Guard(std::unique_lock<std::mutex>(*stripes_[StripeIndex(key)]));
+}
+
+KeyLockTable::MultiGuard KeyLockTable::AcquireMulti(
+    const std::vector<std::string>& keys) {
+  if (keys.empty()) {
+    return MultiGuard();
   }
-  const size_t index = std::hash<std::string>{}(key) % stripes_.size();
-  return Guard(std::unique_lock<std::mutex>(*stripes_[index]));
+
+  std::vector<size_t> stripe_indexes;
+  stripe_indexes.reserve(keys.size());
+  for (const auto& key : keys) {
+    stripe_indexes.push_back(StripeIndex(key));
+  }
+  std::sort(stripe_indexes.begin(), stripe_indexes.end());
+  stripe_indexes.erase(
+      std::unique(stripe_indexes.begin(), stripe_indexes.end()),
+      stripe_indexes.end());
+
+  std::vector<std::unique_lock<std::mutex>> locks;
+  locks.reserve(stripe_indexes.size());
+  for (size_t index : stripe_indexes) {
+    locks.emplace_back(*stripes_[index]);
+  }
+  return MultiGuard(std::move(locks));
 }
 
 }  // namespace minikv

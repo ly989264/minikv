@@ -301,6 +301,44 @@ TEST_F(MiniKVServerTest, FragmentedRespInputAndErrorPath) {
   close(fd);
 }
 
+TEST_F(MiniKVServerTest, MultiKeyExistsAndDelFollowRedisSemantics) {
+  const int fd = ConnectToServer(server_->port());
+
+  WriteAll(fd, EncodeCommand({"HSET", "user:multi:1", "name", "alice"}));
+  RespValue reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kInteger);
+  ASSERT_EQ(reply.integer, 1);
+
+  WriteAll(fd, EncodeCommand({"HSET", "user:multi:2", "name", "bob"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kInteger);
+  ASSERT_EQ(reply.integer, 1);
+
+  WriteAll(fd, EncodeCommand({"EXISTS", "user:multi:1", "user:multi:1",
+                              "missing", "user:multi:2"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kInteger);
+  ASSERT_EQ(reply.integer, 3);
+
+  WriteAll(fd, EncodeCommand({"DEL", "user:multi:1", "user:multi:1",
+                              "missing", "user:multi:2"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kInteger);
+  ASSERT_EQ(reply.integer, 2);
+
+  WriteAll(fd, EncodeCommand({"TYPE", "user:multi:1"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kBulkString);
+  ASSERT_EQ(reply.text, "none");
+
+  WriteAll(fd, EncodeCommand({"HGETALL", "user:multi:2"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kArray);
+  ASSERT_TRUE(reply.array.empty());
+
+  close(fd);
+}
+
 TEST_F(MiniKVServerTest, ConcurrentClientsAcrossIoThreads) {
   std::vector<std::thread> clients;
   for (int i = 0; i < 12; ++i) {
