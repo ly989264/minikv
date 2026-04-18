@@ -6,6 +6,17 @@ loads its command surface from builtin modules only. There is currently no
 external module ABI. The project is maintained here as a standalone project
 under `minikv/`.
 
+## Platform Note
+
+- If your current system is Linux, use the normal `./tools/build_linux.sh`
+  workflow below.
+- If your current system is macOS, do not treat the macOS host as the default
+  build or validation environment.
+- On macOS, first locate or start a Linux Docker container, then run
+  configure/build/test inside that container.
+- For representative container commands, see
+  [docs/build.md#container-workflow](./docs/build.md#container-workflow).
+
 ## Quick Start
 
 Build with the committed RocksDB bundle and vendored googletest:
