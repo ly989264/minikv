@@ -11,6 +11,7 @@
 #include "types/list/list_module.h"
 #include "types/string/string_module.h"
 #include "types/set/set_module.h"
+#include "types/stream/stream_module.h"
 #include "types/zset/zset_module.h"
 
 namespace {
@@ -159,6 +160,7 @@ TEST(ModuleManagerTest, BuiltinModulesLoadIntoUnifiedRegistry) {
   modules.push_back(std::make_unique<minikv::ListModule>());
   modules.push_back(std::make_unique<minikv::SetModule>());
   modules.push_back(std::make_unique<minikv::ZSetModule>());
+  modules.push_back(std::make_unique<minikv::StreamModule>());
 
   minikv::Scheduler scheduler(2, 16);
   minikv::ModuleManager manager(nullptr, &scheduler, std::move(modules));
@@ -220,6 +222,17 @@ TEST(ModuleManagerTest, BuiltinModulesLoadIntoUnifiedRegistry) {
   const minikv::CmdRegistration* zrem = manager.command_registry().Find("ZREM");
   const minikv::CmdRegistration* zscore =
       manager.command_registry().Find("ZSCORE");
+  const minikv::CmdRegistration* xadd = manager.command_registry().Find("XADD");
+  const minikv::CmdRegistration* xtrim =
+      manager.command_registry().Find("XTRIM");
+  const minikv::CmdRegistration* xdel = manager.command_registry().Find("XDEL");
+  const minikv::CmdRegistration* xlen = manager.command_registry().Find("XLEN");
+  const minikv::CmdRegistration* xrange =
+      manager.command_registry().Find("XRANGE");
+  const minikv::CmdRegistration* xrevrange =
+      manager.command_registry().Find("XREVRANGE");
+  const minikv::CmdRegistration* xread =
+      manager.command_registry().Find("XREAD");
 
   ASSERT_NE(ping, nullptr);
   ASSERT_NE(type, nullptr);
@@ -257,6 +270,13 @@ TEST(ModuleManagerTest, BuiltinModulesLoadIntoUnifiedRegistry) {
   ASSERT_NE(zrank, nullptr);
   ASSERT_NE(zrem, nullptr);
   ASSERT_NE(zscore, nullptr);
+  ASSERT_NE(xadd, nullptr);
+  ASSERT_NE(xtrim, nullptr);
+  ASSERT_NE(xdel, nullptr);
+  ASSERT_NE(xlen, nullptr);
+  ASSERT_NE(xrange, nullptr);
+  ASSERT_NE(xrevrange, nullptr);
+  ASSERT_NE(xread, nullptr);
   EXPECT_EQ(ping->owner_module, "core");
   EXPECT_EQ(type->owner_module, "core");
   EXPECT_EQ(exists->owner_module, "core");
@@ -293,6 +313,13 @@ TEST(ModuleManagerTest, BuiltinModulesLoadIntoUnifiedRegistry) {
   EXPECT_EQ(zrank->owner_module, "zset");
   EXPECT_EQ(zrem->owner_module, "zset");
   EXPECT_EQ(zscore->owner_module, "zset");
+  EXPECT_EQ(xadd->owner_module, "stream");
+  EXPECT_EQ(xtrim->owner_module, "stream");
+  EXPECT_EQ(xdel->owner_module, "stream");
+  EXPECT_EQ(xlen->owner_module, "stream");
+  EXPECT_EQ(xrange->owner_module, "stream");
+  EXPECT_EQ(xrevrange->owner_module, "stream");
+  EXPECT_EQ(xread->owner_module, "stream");
 }
 
 }  // namespace

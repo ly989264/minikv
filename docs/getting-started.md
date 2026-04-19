@@ -20,8 +20,9 @@ Current user-visible scope:
   `LPUSH`, `LPOP`, `LRANGE`, `RPUSH`, `RPOP`, `LREM`, `LTRIM`, `LLEN`,
   `SADD`, `SCARD`, `SMEMBERS`, `SISMEMBER`, `SPOP`, `SRANDMEMBER`, `SREM`,
   `ZADD`, `ZCARD`, `ZCOUNT`, `ZINCRBY`, `ZLEXCOUNT`, `ZRANGE`,
-  `ZRANGEBYLEX`, `ZRANGEBYSCORE`, `ZRANK`, `ZREM`, `ZSCORE`
-- supported data types: string, hash, list, set, zset
+  `ZRANGEBYLEX`, `ZRANGEBYSCORE`, `ZRANK`, `ZREM`, `ZSCORE`,
+  `XADD`, `XTRIM`, `XDEL`, `XLEN`, `XRANGE`, `XREVRANGE`, `XREAD`
+- supported data types: string, hash, list, set, zset, stream
 - deployment shape: one POSIX process exposing a TCP server
 - module shape: builtin modules only
 
@@ -54,7 +55,7 @@ Important behavior:
 - `MiniKV::Open()` opens RocksDB before publishing the runtime
 - builtin modules load through `ModuleManager`
 - current builtin load order is `CoreModule`, `StringModule`, `HashModule`,
-  `ListModule`, `SetModule`, then `ZSetModule`
+  `ListModule`, `SetModule`, `ZSetModule`, then `StreamModule`
 - current module support is builtin-only and source-level only
 - `MiniKV` exists to share runtime state with `NetworkServer`
 
@@ -114,7 +115,7 @@ This layer:
 - returns a transport-facing `CommandResponse`
 
 Builtin modules register their command families during `OnLoad()`: core,
-string, hash, list, set, and zset.
+string, hash, list, set, zset, and stream.
 
 ### `src/execution/scheduler/*` and `src/execution/worker/*`
 
@@ -190,6 +191,19 @@ Sorted-set semantics layer.
 - maintaining member-to-score data plus a score-ordered secondary index in
   module-private keyspaces
 - bumping metadata versions when recreating expired or tombstoned zsets
+
+### `src/types/stream/*`
+
+Stream semantics layer.
+
+`StreamModule` is responsible for:
+
+- registering `XADD`, `XTRIM`, `XDEL`, `XLEN`, `XRANGE`, `XREVRANGE`, and
+  `XREAD`
+- registering itself as the whole-key delete handler for stream values
+- maintaining stream entries plus last-accepted-ID state in module-private
+  keyspaces inside the shared `module` column family
+- bumping metadata versions when recreating expired or tombstoned streams
 
 ### `src/storage/engine/*`
 

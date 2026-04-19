@@ -37,7 +37,7 @@ Current builtin module loading behavior:
 - builtin modules only
 - fixed source-compiled module list
 - current load order is `CoreModule`, `StringModule`, `HashModule`,
-  `ListModule`, `SetModule`, then `ZSetModule`
+  `ListModule`, `SetModule`, `ZSetModule`, then `StreamModule`
 - no external ABI
 - no runtime `.so` loading
 

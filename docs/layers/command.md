@@ -72,6 +72,13 @@ Supported commands:
 - `ZRANK`
 - `ZREM`
 - `ZSCORE`
+- `XADD`
+- `XTRIM`
+- `XDEL`
+- `XLEN`
+- `XRANGE`
+- `XREVRANGE`
+- `XREAD`
 
 Those commands are registered by builtin modules during startup:
 
@@ -85,6 +92,8 @@ Those commands are registered by builtin modules during startup:
   `SRANDMEMBER`, `SREM`
 - `ZSetModule`: `ZADD`, `ZCARD`, `ZCOUNT`, `ZINCRBY`, `ZLEXCOUNT`, `ZRANGE`,
   `ZRANGEBYLEX`, `ZRANGEBYSCORE`, `ZRANK`, `ZREM`, `ZSCORE`
+- `StreamModule`: `XADD`, `XTRIM`, `XDEL`, `XLEN`, `XRANGE`, `XREVRANGE`,
+  `XREAD`
 
 `CreateCmd()` resolves names from the shared `CommandRegistry` owned by
 `ModuleManager`.
@@ -133,13 +142,16 @@ Current builtin commands use:
 
 - simple string: `PING`
 - bulk string: `TYPE`, `GET`, `LPOP`, `RPOP`, `SRANDMEMBER`, `SPOP`,
-  `ZINCRBY`, `ZSCORE`
+  `ZINCRBY`, `ZSCORE`, `XADD`
 - integer: `EXISTS`, `DEL`, `EXPIRE`, `TTL`, `PTTL`, `PERSIST`, `STRLEN`,
   `HSET`, `HDEL`, `LLEN`, `LPUSH`, `RPUSH`, `LREM`, `SADD`, `SCARD`,
   `SISMEMBER`, `SREM`, `ZADD`, `ZCARD`, `ZCOUNT`, `ZLEXCOUNT`, `ZRANK`,
-  `ZREM`
+  `ZREM`, `XTRIM`, `XDEL`, `XLEN`
 - flat bulk-string array: `HGETALL`, `LRANGE`, `SMEMBERS`, `ZRANGE`,
   `ZRANGEBYLEX`, `ZRANGEBYSCORE`
+- nested array: `XRANGE`, `XREVRANGE`, `XREAD`
+- null: missing-value reads such as `GET`, `LPOP`, and `RPOP`, plus `XREAD`
+  when every requested stream has no newer entries
 
 ## Current Design Conclusion
 

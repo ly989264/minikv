@@ -17,6 +17,7 @@
 #include "types/list/list_module.h"
 #include "types/string/string_module.h"
 #include "types/set/set_module.h"
+#include "types/stream/stream_module.h"
 #include "types/zset/zset_module.h"
 #include "rocksdb/db.h"
 
@@ -69,6 +70,29 @@ void ExpectBulkString(const minikv::ReplyNode& reply,
                       const std::string& value) {
   ASSERT_TRUE(reply.IsBulkString());
   EXPECT_EQ(reply.string(), value);
+}
+
+void ExpectStreamFieldArray(
+    const minikv::ReplyNode& reply,
+    const std::vector<minikv::StreamFieldValue>& expected) {
+  ASSERT_TRUE(reply.IsArray());
+  ASSERT_EQ(reply.array().size(), expected.size() * 2);
+  for (size_t index = 0; index < expected.size(); ++index) {
+    ASSERT_TRUE(reply.array()[index * 2].IsBulkString());
+    ASSERT_TRUE(reply.array()[index * 2 + 1].IsBulkString());
+    EXPECT_EQ(reply.array()[index * 2].string(), expected[index].field);
+    EXPECT_EQ(reply.array()[index * 2 + 1].string(), expected[index].value);
+  }
+}
+
+void ExpectStreamEntryReply(
+    const minikv::ReplyNode& reply, const std::string& id,
+    const std::vector<minikv::StreamFieldValue>& expected_fields) {
+  ASSERT_TRUE(reply.IsArray());
+  ASSERT_EQ(reply.array().size(), 2U);
+  ASSERT_TRUE(reply.array()[0].IsBulkString());
+  EXPECT_EQ(reply.array()[0].string(), id);
+  ExpectStreamFieldArray(reply.array()[1], expected_fields);
 }
 
 void ExpectMembersUnordered(const std::vector<std::string>& actual,
@@ -182,6 +206,9 @@ class ModuleRuntimeTest : public ::testing::Test {
     auto zset_module = std::make_unique<minikv::ZSetModule>();
     zset_module_ = zset_module.get();
     modules.push_back(std::move(zset_module));
+    auto stream_module = std::make_unique<minikv::StreamModule>();
+    stream_module_ = stream_module.get();
+    modules.push_back(std::move(stream_module));
 
     module_manager_ = std::make_unique<minikv::ModuleManager>(
         storage_engine_.get(), scheduler_.get(), std::move(modules));
@@ -220,6 +247,7 @@ class ModuleRuntimeTest : public ::testing::Test {
   minikv::ListModule* list_module_ = nullptr;
   minikv::SetModule* set_module_ = nullptr;
   minikv::ZSetModule* zset_module_ = nullptr;
+  minikv::StreamModule* stream_module_ = nullptr;
 };
 
 TEST_F(ModuleRuntimeTest, FindsRegisteredCommandsByName) {
@@ -463,6 +491,48 @@ TEST_F(ModuleRuntimeTest, FindsRegisteredCommandsByName) {
   EXPECT_EQ(zscore->name, "ZSCORE");
   EXPECT_EQ(zscore->owner_module, "zset");
   ExpectFlags(zscore->flags, true, false, true, false);
+
+  const minikv::CmdRegistration* xadd = registry().Find("XADD");
+  ASSERT_NE(xadd, nullptr);
+  EXPECT_EQ(xadd->name, "XADD");
+  EXPECT_EQ(xadd->owner_module, "stream");
+  ExpectFlags(xadd->flags, false, true, true, false);
+
+  const minikv::CmdRegistration* xtrim = registry().Find("XTRIM");
+  ASSERT_NE(xtrim, nullptr);
+  EXPECT_EQ(xtrim->name, "XTRIM");
+  EXPECT_EQ(xtrim->owner_module, "stream");
+  ExpectFlags(xtrim->flags, false, true, false, true);
+
+  const minikv::CmdRegistration* xdel = registry().Find("XDEL");
+  ASSERT_NE(xdel, nullptr);
+  EXPECT_EQ(xdel->name, "XDEL");
+  EXPECT_EQ(xdel->owner_module, "stream");
+  ExpectFlags(xdel->flags, false, true, false, true);
+
+  const minikv::CmdRegistration* xlen = registry().Find("XLEN");
+  ASSERT_NE(xlen, nullptr);
+  EXPECT_EQ(xlen->name, "XLEN");
+  EXPECT_EQ(xlen->owner_module, "stream");
+  ExpectFlags(xlen->flags, true, false, true, false);
+
+  const minikv::CmdRegistration* xrange = registry().Find("XRANGE");
+  ASSERT_NE(xrange, nullptr);
+  EXPECT_EQ(xrange->name, "XRANGE");
+  EXPECT_EQ(xrange->owner_module, "stream");
+  ExpectFlags(xrange->flags, true, false, false, true);
+
+  const minikv::CmdRegistration* xrevrange = registry().Find("XREVRANGE");
+  ASSERT_NE(xrevrange, nullptr);
+  EXPECT_EQ(xrevrange->name, "XREVRANGE");
+  EXPECT_EQ(xrevrange->owner_module, "stream");
+  ExpectFlags(xrevrange->flags, true, false, false, true);
+
+  const minikv::CmdRegistration* xread = registry().Find("XREAD");
+  ASSERT_NE(xread, nullptr);
+  EXPECT_EQ(xread->name, "XREAD");
+  EXPECT_EQ(xread->owner_module, "stream");
+  ExpectFlags(xread->flags, true, false, false, true);
 }
 
 TEST_F(ModuleRuntimeTest, ReturnsNullForUnknownRegistrations) {
@@ -618,6 +688,33 @@ TEST_F(ModuleRuntimeTest, CreatesCommandsFromRespParts) {
           .ok());
   ASSERT_NE(lower_zset, nullptr);
   EXPECT_EQ(lower_zset->Name(), "ZSCORE");
+
+  std::unique_ptr<minikv::Cmd> xadd;
+  ASSERT_TRUE(minikv::CreateCmd(
+                  registry(),
+                  {"XADD", "stream:1", "1-0", "field", "value", "city",
+                   "shanghai"},
+                  &xadd)
+                  .ok());
+  ASSERT_NE(xadd, nullptr);
+  EXPECT_EQ(xadd->Name(), "XADD");
+  EXPECT_EQ(xadd->RouteKey(), "stream:1");
+  ExpectLockPlan(xadd->lock_plan(), minikv::Cmd::LockPlan::Kind::kSingle,
+                 "stream:1", {});
+  ExpectFlags(xadd->Flags(), false, true, true, false);
+
+  std::unique_ptr<minikv::Cmd> xread;
+  ASSERT_TRUE(minikv::CreateCmd(
+                  registry(),
+                  {"XREAD", "STREAMS", "stream:3", "stream:1", "0-0", "1-0"},
+                  &xread)
+                  .ok());
+  ASSERT_NE(xread, nullptr);
+  EXPECT_EQ(xread->Name(), "XREAD");
+  EXPECT_TRUE(xread->RouteKey().empty());
+  ExpectLockPlan(xread->lock_plan(), minikv::Cmd::LockPlan::Kind::kMulti, "",
+                 {"stream:1", "stream:3"});
+  ExpectFlags(xread->Flags(), true, false, false, true);
 }
 
 TEST_F(ModuleRuntimeTest, RejectsBadArgumentsAndNullOutputs) {
@@ -864,6 +961,97 @@ TEST_F(ModuleRuntimeTest, RejectsBadArgumentsAndNullOutputs) {
   ASSERT_TRUE(status.IsInvalidArgument());
   EXPECT_NE(status.ToString().find("ZSCORE requires member"),
             std::string::npos);
+
+  status = minikv::CreateCmd(registry(), {"XADD", "stream:1"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("XADD requires id and field/value pairs"),
+            std::string::npos);
+
+  status =
+      minikv::CreateCmd(registry(), {"XADD", "stream:1", "1-0", "field"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("XADD requires id and field/value pairs"),
+            std::string::npos);
+
+  status = minikv::CreateCmd(
+      registry(), {"XADD", "stream:1", "bad-id", "field", "value"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("valid id"), std::string::npos);
+
+  status = minikv::CreateCmd(registry(), {"XTRIM", "stream:1"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("XTRIM requires MAXLEN and threshold"),
+            std::string::npos);
+
+  status = minikv::CreateCmd(
+      registry(), {"XTRIM", "stream:1", "MINID", "1"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("XTRIM requires MAXLEN and threshold"),
+            std::string::npos);
+
+  status = minikv::CreateCmd(
+      registry(), {"XTRIM", "stream:1", "MAXLEN", "bad"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("integer threshold"), std::string::npos);
+
+  status = minikv::CreateCmd(registry(), {"XDEL", "stream:1"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("XDEL requires at least one id"),
+            std::string::npos);
+
+  status =
+      minikv::CreateCmd(registry(), {"XDEL", "stream:1", "bad-id"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("XDEL requires valid id"),
+            std::string::npos);
+
+  status = minikv::CreateCmd(registry(), {"XLEN", "stream:1", "extra"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("XLEN takes no extra arguments"),
+            std::string::npos);
+
+  status = minikv::CreateCmd(registry(), {"XRANGE", "stream:1", "-"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("XRANGE requires start and end"),
+            std::string::npos);
+
+  status = minikv::CreateCmd(
+      registry(), {"XRANGE", "stream:1", "bad", "+"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("valid start id"), std::string::npos);
+
+  status = minikv::CreateCmd(registry(), {"XREVRANGE", "stream:1", "+"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("XREVRANGE requires end and start"),
+            std::string::npos);
+
+  status = minikv::CreateCmd(
+      registry(), {"XREVRANGE", "stream:1", "+", "bad"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("valid start id"), std::string::npos);
+
+  status = minikv::CreateCmd(registry(), {"XREAD"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("XREAD requires STREAMS keyword"),
+            std::string::npos);
+
+  status = minikv::CreateCmd(
+      registry(), {"XREAD", "COUNT", "1", "STREAMS", "stream:1", "0-0"},
+      &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("XREAD requires STREAMS keyword"),
+            std::string::npos);
+
+  status =
+      minikv::CreateCmd(registry(), {"XREAD", "STREAMS", "stream:1"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("matching stream keys and ids"),
+            std::string::npos);
+
+  status = minikv::CreateCmd(
+      registry(), {"XREAD", "STREAMS", "stream:1", "$"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("valid id"), std::string::npos);
 
   status = minikv::CreateCmd(registry(), {"PING", "extra"}, &cmd);
   ASSERT_TRUE(status.IsInvalidArgument());
@@ -1331,6 +1519,68 @@ TEST_F(ModuleRuntimeTest, ZSetCommandsExecuteAgainstEngine) {
   EXPECT_FALSE(found);
 }
 
+TEST_F(ModuleRuntimeTest, StreamCommandsExecuteAgainstEngine) {
+  minikv::CommandResponse response =
+      CreateFromParts({"XADD", "stream:cmd", "1-0", "name", "alice", "city",
+                       "shanghai"})
+          ->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ExpectBulkString(response.reply, "1-0");
+
+  response =
+      CreateFromParts({"XADD", "stream:cmd", "1-1", "name", "bob"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ExpectBulkString(response.reply, "1-1");
+
+  response = CreateFromParts({"XLEN", "stream:cmd"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsInteger());
+  EXPECT_EQ(response.reply.integer(), 2);
+
+  response = CreateFromParts({"XRANGE", "stream:cmd", "-", "+"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsArray());
+  ASSERT_EQ(response.reply.array().size(), 2U);
+  ExpectStreamEntryReply(response.reply.array()[0], "1-0",
+                         {{"name", "alice"}, {"city", "shanghai"}});
+  ExpectStreamEntryReply(response.reply.array()[1], "1-1", {{"name", "bob"}});
+
+  response =
+      CreateFromParts({"XREVRANGE", "stream:cmd", "+", "-"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsArray());
+  ASSERT_EQ(response.reply.array().size(), 2U);
+  ExpectStreamEntryReply(response.reply.array()[0], "1-1", {{"name", "bob"}});
+  ExpectStreamEntryReply(response.reply.array()[1], "1-0",
+                         {{"name", "alice"}, {"city", "shanghai"}});
+
+  response =
+      CreateFromParts({"XREAD", "STREAMS", "stream:cmd", "0-0"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsArray());
+  ASSERT_EQ(response.reply.array().size(), 1U);
+  ASSERT_TRUE(response.reply.array()[0].IsArray());
+  ASSERT_EQ(response.reply.array()[0].array().size(), 2U);
+  ExpectBulkString(response.reply.array()[0].array()[0], "stream:cmd");
+  ASSERT_TRUE(response.reply.array()[0].array()[1].IsArray());
+  ASSERT_EQ(response.reply.array()[0].array()[1].array().size(), 2U);
+  ExpectStreamEntryReply(response.reply.array()[0].array()[1].array()[0], "1-0",
+                         {{"name", "alice"}, {"city", "shanghai"}});
+  ExpectStreamEntryReply(response.reply.array()[0].array()[1].array()[1], "1-1",
+                         {{"name", "bob"}});
+
+  response = CreateFromParts({"XDEL", "stream:cmd", "1-0", "9-0"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsInteger());
+  EXPECT_EQ(response.reply.integer(), 1);
+
+  response =
+      CreateFromParts({"XTRIM", "stream:cmd", "MAXLEN", "0"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsInteger());
+  EXPECT_EQ(response.reply.integer(), 1);
+}
+
 TEST_F(ModuleRuntimeTest, ListCommandsExecuteAgainstEngine) {
   std::unique_ptr<minikv::Cmd> rpush =
       CreateFromParts({"RPUSH", "list:cmd", "a", "b", "c"});
@@ -1451,6 +1701,43 @@ TEST_F(ModuleRuntimeTest, SetCommandsOnMissingKeyReturnEmptySuccess) {
   EXPECT_TRUE(response.reply.IsNull());
 
   response = CreateFromParts({"SPOP", "missing-set"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  EXPECT_TRUE(response.reply.IsNull());
+}
+
+TEST_F(ModuleRuntimeTest, StreamCommandsOnMissingKeyReturnEmptySuccess) {
+  minikv::CommandResponse response =
+      CreateFromParts({"XLEN", "missing-stream"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsInteger());
+  EXPECT_EQ(response.reply.integer(), 0);
+
+  response =
+      CreateFromParts({"XRANGE", "missing-stream", "-", "+"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsArray());
+  EXPECT_TRUE(response.reply.array().empty());
+
+  response =
+      CreateFromParts({"XREVRANGE", "missing-stream", "+", "-"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsArray());
+  EXPECT_TRUE(response.reply.array().empty());
+
+  response = CreateFromParts({"XDEL", "missing-stream", "1-0"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsInteger());
+  EXPECT_EQ(response.reply.integer(), 0);
+
+  response =
+      CreateFromParts({"XTRIM", "missing-stream", "MAXLEN", "1"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsInteger());
+  EXPECT_EQ(response.reply.integer(), 0);
+
+  response = CreateFromParts(
+                 {"XREAD", "STREAMS", "missing-stream", "0-0"})
+                 ->Execute();
   ASSERT_TRUE(response.status.ok());
   EXPECT_TRUE(response.reply.IsNull());
 }
@@ -1596,6 +1883,43 @@ TEST_F(ModuleRuntimeTest, TypeDelAndExpireExecuteAgainstListKeys) {
   EXPECT_EQ(response.reply.integer(), 0);
 }
 
+TEST_F(ModuleRuntimeTest, TypeDelAndExpireExecuteAgainstStreamKeys) {
+  ASSERT_TRUE(stream_module_
+                  ->AddEntry("stream:lifecycle", "1-0", {{"field", "value"}},
+                             nullptr)
+                  .ok());
+
+  minikv::CommandResponse response =
+      CreateFromParts({"TYPE", "stream:lifecycle"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ExpectBulkString(response.reply, "stream");
+
+  response = CreateFromParts({"EXPIRE", "stream:lifecycle", "0"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsInteger());
+  EXPECT_EQ(response.reply.integer(), 1);
+
+  response = CreateFromParts({"TYPE", "stream:lifecycle"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ExpectBulkString(response.reply, "none");
+
+  response = CreateFromParts(
+                 {"XADD", "stream:lifecycle", "2-0", "field", "fresh"})
+                 ->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ExpectBulkString(response.reply, "2-0");
+
+  response = CreateFromParts({"DEL", "stream:lifecycle"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsInteger());
+  EXPECT_EQ(response.reply.integer(), 1);
+
+  response = CreateFromParts({"EXISTS", "stream:lifecycle"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsInteger());
+  EXPECT_EQ(response.reply.integer(), 0);
+}
+
 TEST_F(ModuleRuntimeTest, HashCommandsOnMissingKeyReturnEmptySuccess) {
   std::unique_ptr<minikv::Cmd> get =
       CreateFromParts({"HGETALL", "missing"});
@@ -1645,6 +1969,35 @@ TEST_F(ModuleRuntimeTest, StringCommandsRejectWrongTypeKeys) {
             std::string::npos);
 
   response = CreateFromParts({"STRLEN", "user:string-wrong"})->Execute();
+  ASSERT_TRUE(response.status.IsInvalidArgument());
+  EXPECT_NE(response.status.ToString().find("key type mismatch"),
+            std::string::npos);
+}
+
+TEST_F(ModuleRuntimeTest, StreamCommandsRejectWrongTypeKeys) {
+  ASSERT_TRUE(string_module_->SetValue("stream:wrong", "hello").ok());
+
+  minikv::CommandResponse response =
+      CreateFromParts({"XLEN", "stream:wrong"})->Execute();
+  ASSERT_TRUE(response.status.IsInvalidArgument());
+  EXPECT_NE(response.status.ToString().find("key type mismatch"),
+            std::string::npos);
+
+  response =
+      CreateFromParts({"XRANGE", "stream:wrong", "-", "+"})->Execute();
+  ASSERT_TRUE(response.status.IsInvalidArgument());
+  EXPECT_NE(response.status.ToString().find("key type mismatch"),
+            std::string::npos);
+
+  response = CreateFromParts(
+                 {"XADD", "stream:wrong", "1-0", "field", "value"})
+                 ->Execute();
+  ASSERT_TRUE(response.status.IsInvalidArgument());
+  EXPECT_NE(response.status.ToString().find("key type mismatch"),
+            std::string::npos);
+
+  response =
+      CreateFromParts({"XREAD", "STREAMS", "stream:wrong", "0-0"})->Execute();
   ASSERT_TRUE(response.status.IsInvalidArgument());
   EXPECT_NE(response.status.ToString().find("key type mismatch"),
             std::string::npos);

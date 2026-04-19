@@ -73,6 +73,25 @@ void ExpectArrayTextsUnordered(const RespValue& value,
   EXPECT_EQ(actual_sorted, expected_sorted);
 }
 
+void ExpectStreamFieldArray(const RespValue& value,
+                            const std::vector<std::string>& expected) {
+  ASSERT_EQ(value.type, RespValue::Type::kArray);
+  ASSERT_EQ(value.array.size(), expected.size());
+  for (size_t index = 0; index < expected.size(); ++index) {
+    ASSERT_EQ(value.array[index].type, RespValue::Type::kBulkString);
+    EXPECT_EQ(value.array[index].text, expected[index]);
+  }
+}
+
+void ExpectStreamEntry(const RespValue& value, const std::string& id,
+                       const std::vector<std::string>& fields) {
+  ASSERT_EQ(value.type, RespValue::Type::kArray);
+  ASSERT_EQ(value.array.size(), 2U);
+  ASSERT_EQ(value.array[0].type, RespValue::Type::kBulkString);
+  EXPECT_EQ(value.array[0].text, id);
+  ExpectStreamFieldArray(value.array[1], fields);
+}
+
 void WriteAll(int fd, const std::string& data) {
   size_t offset = 0;
   while (offset < data.size()) {
@@ -559,6 +578,88 @@ TEST_F(MiniKVServerTest, ZSetCommandsWorkOverNetwork) {
   WriteAll(fd, EncodeCommand({"ZRANK", "zset:1", "b"}));
   reply = ReadRespValue(fd);
   ASSERT_EQ(reply.type, RespValue::Type::kNull);
+
+  close(fd);
+}
+
+TEST_F(MiniKVServerTest, StreamCommandsWorkOverNetwork) {
+  const int fd = ConnectToServer(server_->port());
+
+  WriteAll(fd, EncodeCommand(
+                   {"XADD", "stream:1", "1-0", "name", "alice", "city",
+                    "shanghai"}));
+  RespValue reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kBulkString);
+  ASSERT_EQ(reply.text, "1-0");
+
+  WriteAll(fd, EncodeCommand({"XADD", "stream:1", "1-1", "name", "bob"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kBulkString);
+  ASSERT_EQ(reply.text, "1-1");
+
+  WriteAll(fd, EncodeCommand({"TYPE", "stream:1"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kBulkString);
+  ASSERT_EQ(reply.text, "stream");
+
+  WriteAll(fd, EncodeCommand({"XLEN", "stream:1"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kInteger);
+  ASSERT_EQ(reply.integer, 2);
+
+  WriteAll(fd, EncodeCommand({"XRANGE", "stream:1", "-", "+"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kArray);
+  ASSERT_EQ(reply.array.size(), 2U);
+  ExpectStreamEntry(reply.array[0], "1-0",
+                    {"name", "alice", "city", "shanghai"});
+  ExpectStreamEntry(reply.array[1], "1-1", {"name", "bob"});
+
+  WriteAll(fd, EncodeCommand({"XREVRANGE", "stream:1", "+", "-"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kArray);
+  ASSERT_EQ(reply.array.size(), 2U);
+  ExpectStreamEntry(reply.array[0], "1-1", {"name", "bob"});
+  ExpectStreamEntry(reply.array[1], "1-0",
+                    {"name", "alice", "city", "shanghai"});
+
+  WriteAll(fd, EncodeCommand({"XREAD", "STREAMS", "stream:1", "1-0"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kArray);
+  ASSERT_EQ(reply.array.size(), 1U);
+  ASSERT_EQ(reply.array[0].type, RespValue::Type::kArray);
+  ASSERT_EQ(reply.array[0].array.size(), 2U);
+  ASSERT_EQ(reply.array[0].array[0].type, RespValue::Type::kBulkString);
+  ASSERT_EQ(reply.array[0].array[0].text, "stream:1");
+  ASSERT_EQ(reply.array[0].array[1].type, RespValue::Type::kArray);
+  ASSERT_EQ(reply.array[0].array[1].array.size(), 1U);
+  ExpectStreamEntry(reply.array[0].array[1].array[0], "1-1",
+                    {"name", "bob"});
+
+  WriteAll(fd, EncodeCommand({"XDEL", "stream:1", "1-0", "9-0"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kInteger);
+  ASSERT_EQ(reply.integer, 1);
+
+  WriteAll(fd, EncodeCommand({"XTRIM", "stream:1", "MAXLEN", "0"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kInteger);
+  ASSERT_EQ(reply.integer, 1);
+
+  WriteAll(fd, EncodeCommand({"TYPE", "stream:1"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kBulkString);
+  ASSERT_EQ(reply.text, "none");
+
+  WriteAll(fd, EncodeCommand({"EXISTS", "stream:1"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kInteger);
+  ASSERT_EQ(reply.integer, 0);
+
+  WriteAll(fd, EncodeCommand({"XADD", "stream:bad", "0-0", "field", "value"}));
+  RespValue error = ReadRespValue(fd);
+  ASSERT_EQ(error.type, RespValue::Type::kError);
+  ASSERT_NE(error.text.find("greater than 0-0"), std::string::npos);
 
   close(fd);
 }

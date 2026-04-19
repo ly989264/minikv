@@ -36,18 +36,23 @@ The baseline test matrix is:
 
 - `minikv_cmd_test`
 - `minikv_command_registry_test`
+- `minikv_module_exports_test`
+- `minikv_module_keyspace_test`
+- `minikv_module_iterator_test`
+- `minikv_background_executor_test`
 - `minikv_hash_module_test`
+- `minikv_list_module_test`
+- `minikv_string_module_test`
+- `minikv_set_module_test`
+- `minikv_stream_module_test`
+- `minikv_zset_module_test`
+- `minikv_hash_bridge_test`
+- `minikv_hash_observer_test`
 - `minikv_network_test`
 - `minikv_reply_encode_test`
 - `minikv_scheduler_test`
 - `minikv_snapshot_test`
 - `minikv_module_manager_test`
-- `minikv_module_exports_test`
-- `minikv_module_keyspace_test`
-- `minikv_module_iterator_test`
-- `minikv_background_executor_test`
-- `minikv_hash_bridge_test`
-- `minikv_hash_observer_test`
 
 All of these are expected to run through:
 
@@ -106,14 +111,15 @@ the unit and integration tests:
 
 The current baseline applies to the current implementation surface:
 
-- supported user-visible data types: string, hash, list, set, zset
+- supported user-visible data types: string, hash, list, set, zset, stream
 - supported server replies from builtin commands: simple string, integer, bulk
-  string, flat array, and error
+  string, flat array, nested array, null, and error
 - module SPI: builtin-only
 
 Explicitly out of scope for this baseline:
 
-- unimplemented data types such as stream
+- Redis stream options beyond the current core subset, such as `BLOCK`,
+  `COUNT`, `$`, `NOMKSTREAM`, `MINID`, and approximate trims
 - external module loading or external ABI behavior
 - search commands including `FT.*`
 - benchmarking claims beyond the smoke script's simple latency samples

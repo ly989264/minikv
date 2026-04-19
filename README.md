@@ -17,10 +17,12 @@ Current builtin modules:
   `SRANDMEMBER`, `SREM`
 - `ZSetModule`: `ZADD`, `ZCARD`, `ZCOUNT`, `ZINCRBY`, `ZLEXCOUNT`, `ZRANGE`,
   `ZRANGEBYLEX`, `ZRANGEBYSCORE`, `ZRANK`, `ZREM`, `ZSCORE`
+- `StreamModule`: `XADD`, `XTRIM`, `XDEL`, `XLEN`, `XRANGE`, `XREVRANGE`,
+  `XREAD`
 
 Current user-visible data model:
 
-- string, hash, list, set, and zset keys
+- string, hash, list, set, zset, and stream keys
 - per-key metadata with live, expired, and tombstone lifecycle states
 - module-private storage keyspaces in a shared RocksDB `module` column family
 
@@ -90,6 +92,7 @@ from the metadata recorded in `third_party/rocksdb/linux-x86_64/BUNDLE_INFO.env`
 - `src/types/list/`: list commands and list storage semantics
 - `src/types/set/`: set commands and set storage semantics
 - `src/types/zset/`: sorted-set commands and zset storage semantics
+- `src/types/stream/`: stream commands and stream storage semantics
 - `src/`: implementation sources. There is no `include/minikv/` public header
   tree yet in this standalone project
 - `tests/`: unit and integration tests

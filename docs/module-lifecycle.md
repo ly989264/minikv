@@ -48,6 +48,7 @@ Current builtin load order is:
 4. `ListModule`
 5. `SetModule`
 6. `ZSetModule`
+7. `StreamModule`
 
 ## Startup Windows
 

@@ -44,6 +44,7 @@ The main responsibilities are:
 - `src/types/list/`: list builtin module and list command handling
 - `src/types/set/`: set builtin module and set command handling
 - `src/types/zset/`: zset builtin module and sorted-set command handling
+- `src/types/stream/`: stream builtin module and stream command handling
 - `src/storage/engine/` and `src/storage/encoding/`: RocksDB integration,
   snapshots, write batching, and key encoding rules
 
@@ -56,8 +57,9 @@ Public behavior is intentionally narrow today:
   `LPUSH`, `LPOP`, `LRANGE`, `RPUSH`, `RPOP`, `LREM`, `LTRIM`, `LLEN`,
   `SADD`, `SCARD`, `SMEMBERS`, `SISMEMBER`, `SPOP`, `SRANDMEMBER`, `SREM`,
   `ZADD`, `ZCARD`, `ZCOUNT`, `ZINCRBY`, `ZLEXCOUNT`, `ZRANGE`,
-  `ZRANGEBYLEX`, `ZRANGEBYSCORE`, `ZRANK`, `ZREM`, `ZSCORE`
-- supported data types: string, hash, list, set, zset
+  `ZRANGEBYLEX`, `ZRANGEBYSCORE`, `ZRANK`, `ZREM`, `ZSCORE`,
+  `XADD`, `XTRIM`, `XDEL`, `XLEN`, `XRANGE`, `XREVRANGE`, `XREAD`
+- supported data types: string, hash, list, set, zset, stream
 - supported deployment shape: single process, POSIX server path
 - supported module shape: builtin modules only, with no external ABI
 - search wiring is still limited to prep infrastructure; there is no builtin
@@ -107,6 +109,7 @@ Builtin module load order is fixed:
 4. `ListModule`
 5. `SetModule`
 6. `ZSetModule`
+7. `StreamModule`
 
 Current command ownership:
 
@@ -120,6 +123,8 @@ Current command ownership:
   `SRANDMEMBER`, `SREM`
 - `ZSetModule`: `ZADD`, `ZCARD`, `ZCOUNT`, `ZINCRBY`, `ZLEXCOUNT`, `ZRANGE`,
   `ZRANGEBYLEX`, `ZRANGEBYSCORE`, `ZRANK`, `ZREM`, `ZSCORE`
+- `StreamModule`: `XADD`, `XTRIM`, `XDEL`, `XLEN`, `XRANGE`, `XREVRANGE`,
+  `XREAD`
 
 Important current boundaries:
 
@@ -128,6 +133,9 @@ Important current boundaries:
 - `CoreModule` exports `CoreKeyService` and `WholeKeyDeleteRegistry`
 - `HashModule` exports `HashIndexingBridge` and registers itself as the
   `WholeKeyDeleteHandler` for hash keys
+- `StreamModule` registers itself as the `WholeKeyDeleteHandler` for stream
+  keys and keeps its stream-private entry and state keyspaces inside the shared
+  `module` column family
 
 ## Storage Model
 
