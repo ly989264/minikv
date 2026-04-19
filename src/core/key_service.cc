@@ -33,6 +33,7 @@ bool IsKnownObjectType(uint8_t value) {
     case ObjectType::kSet:
     case ObjectType::kZSet:
     case ObjectType::kStream:
+    case ObjectType::kJson:
       return true;
   }
   return false;
@@ -47,6 +48,7 @@ bool IsKnownObjectEncoding(uint8_t value) {
     case ObjectEncoding::kZSetSkiplist:
     case ObjectEncoding::kStreamRadixTree:
     case ObjectEncoding::kZSetGeo:
+    case ObjectEncoding::kJsonDocument:
       return true;
   }
   return false;
@@ -184,6 +186,8 @@ std::string DefaultCoreKeyService::ObjectTypeName(ObjectType type) const {
       return "zset";
     case ObjectType::kStream:
       return "stream";
+    case ObjectType::kJson:
+      return "json";
   }
   return "unknown";
 }

@@ -36,8 +36,9 @@ Current builtin module loading behavior:
 
 - builtin modules only
 - fixed source-compiled module list
-- current load order is `CoreModule`, `StringModule`, `HashModule`,
-  `ListModule`, `SetModule`, `ZSetModule`, `GeoModule`, then `StreamModule`
+- current load order is `CoreModule`, `StringModule`, `BitmapModule`,
+  `HashModule`, `JsonModule`, `ListModule`, `SetModule`, `ZSetModule`,
+  `GeoModule`, then `StreamModule`
 - no external ABI
 - no runtime `.so` loading
 

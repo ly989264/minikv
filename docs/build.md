@@ -15,6 +15,7 @@ and verified in this standalone `minikv/` workspace.
 - `minikv_cmd_test`
 - `minikv_command_registry_test`
 - `minikv_hash_module_test`
+- `minikv_json_module_test`
 - `minikv_list_module_test`
 - `minikv_string_module_test`
 - `minikv_bitmap_module_test`
@@ -40,13 +41,15 @@ All targets build as C++17.
 ## Dependency Strategy
 
 Default dependency mode prefers the committed RocksDB bundle and the vendored
-googletest tree:
+googletest tree plus the checked-in header-only JSON library:
 
 - `MINIKV_USE_BUNDLED_ROCKSDB=ON`
 - `MINIKV_ROCKSDB_BUNDLE_DIR=third_party/rocksdb/linux-x86_64`
 - `MINIKV_FETCH_DEPS=OFF` when the bundle is complete
 - `MINIKV_GTEST_SOURCE_DIR=third_party/googletest`
 - `MINIKV_FETCH_GTEST=OFF` when the vendored googletest tree is present
+- `third_party/minijson/minijson.h` is always available locally and never
+  fetched during configure
 - `MINIKV_ROCKSDB_TAG=v11.0.4` for `FetchContent` fallback only
 - `MINIKV_GTEST_TAG=v1.14.0` for `FetchContent` fallback only
 

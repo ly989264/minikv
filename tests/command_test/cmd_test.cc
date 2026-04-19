@@ -15,6 +15,7 @@
 #include "types/bitmap/bitmap_module.h"
 #include "core/core_module.h"
 #include "types/hash/hash_module.h"
+#include "types/json/json_module.h"
 #include "types/list/list_module.h"
 #include "types/string/string_module.h"
 #include "types/set/set_module.h"
@@ -212,6 +213,9 @@ class ModuleRuntimeTest : public ::testing::Test {
     auto hash_module = std::make_unique<minikv::HashModule>();
     hash_module_ = hash_module.get();
     modules.push_back(std::move(hash_module));
+    auto json_module = std::make_unique<minikv::JsonModule>();
+    json_module_ = json_module.get();
+    modules.push_back(std::move(json_module));
     auto list_module = std::make_unique<minikv::ListModule>();
     list_module_ = list_module.get();
     modules.push_back(std::move(list_module));
@@ -262,6 +266,7 @@ class ModuleRuntimeTest : public ::testing::Test {
   std::unique_ptr<minikv::StorageEngine> storage_engine_;
   minikv::BitmapModule* bitmap_module_ = nullptr;
   minikv::HashModule* hash_module_ = nullptr;
+  minikv::JsonModule* json_module_ = nullptr;
   minikv::StringModule* string_module_ = nullptr;
   minikv::ListModule* list_module_ = nullptr;
   minikv::SetModule* set_module_ = nullptr;
@@ -372,6 +377,24 @@ TEST_F(ModuleRuntimeTest, FindsRegisteredCommandsByName) {
   EXPECT_EQ(hdel->name, "HDEL");
   EXPECT_EQ(hdel->owner_module, "hash");
   ExpectFlags(hdel->flags, false, true, false, true);
+
+  const minikv::CmdRegistration* json_set = registry().Find("JSON.SET");
+  ASSERT_NE(json_set, nullptr);
+  EXPECT_EQ(json_set->name, "JSON.SET");
+  EXPECT_EQ(json_set->owner_module, "json");
+  ExpectFlags(json_set->flags, false, true, true, false);
+
+  const minikv::CmdRegistration* json_get = registry().Find("JSON.GET");
+  ASSERT_NE(json_get, nullptr);
+  EXPECT_EQ(json_get->name, "JSON.GET");
+  EXPECT_EQ(json_get->owner_module, "json");
+  ExpectFlags(json_get->flags, true, false, true, false);
+
+  const minikv::CmdRegistration* json_mget = registry().Find("JSON.MGET");
+  ASSERT_NE(json_mget, nullptr);
+  EXPECT_EQ(json_mget->name, "JSON.MGET");
+  EXPECT_EQ(json_mget->owner_module, "json");
+  ExpectFlags(json_mget->flags, true, false, true, false);
 
   const minikv::CmdRegistration* lpush = registry().Find("LPUSH");
   ASSERT_NE(lpush, nullptr);
@@ -687,6 +710,44 @@ TEST_F(ModuleRuntimeTest, CreatesCommandsFromRespParts) {
   ASSERT_NE(lower, nullptr);
   EXPECT_EQ(lower->Name(), "HGETALL");
 
+  std::unique_ptr<minikv::Cmd> json_set;
+  ASSERT_TRUE(minikv::CreateCmd(
+                  registry(),
+                  {"JSON.SET", "doc:1", "$", "{\"name\":\"alice\"}"},
+                  &json_set)
+                  .ok());
+  ASSERT_NE(json_set, nullptr);
+  EXPECT_EQ(json_set->Name(), "JSON.SET");
+  EXPECT_EQ(json_set->RouteKey(), "doc:1");
+  ExpectLockPlan(json_set->lock_plan(), minikv::Cmd::LockPlan::Kind::kSingle,
+                 "doc:1", {});
+  ExpectFlags(json_set->Flags(), false, true, true, false);
+
+  std::unique_ptr<minikv::Cmd> json_get;
+  ASSERT_TRUE(minikv::CreateCmd(registry(),
+                                {"json.get", "doc:1", "INDENT", "  ", "$"},
+                                &json_get)
+                  .ok());
+  ASSERT_NE(json_get, nullptr);
+  EXPECT_EQ(json_get->Name(), "JSON.GET");
+  EXPECT_EQ(json_get->RouteKey(), "doc:1");
+  ExpectLockPlan(json_get->lock_plan(), minikv::Cmd::LockPlan::Kind::kSingle,
+                 "doc:1", {});
+  ExpectFlags(json_get->Flags(), true, false, true, false);
+
+  std::unique_ptr<minikv::Cmd> json_mget;
+  ASSERT_TRUE(minikv::CreateCmd(
+                  registry(),
+                  {"JSON.MGET", "doc:3", "doc:1", "doc:2", "$.name"},
+                  &json_mget)
+                  .ok());
+  ASSERT_NE(json_mget, nullptr);
+  EXPECT_EQ(json_mget->Name(), "JSON.MGET");
+  EXPECT_TRUE(json_mget->RouteKey().empty());
+  ExpectLockPlan(json_mget->lock_plan(), minikv::Cmd::LockPlan::Kind::kMulti,
+                 "", {"doc:1", "doc:2", "doc:3"});
+  ExpectFlags(json_mget->Flags(), true, false, true, false);
+
   std::unique_ptr<minikv::Cmd> set;
   ASSERT_TRUE(minikv::CreateCmd(registry(), {"SET", "str:1", "value"}, &set).ok());
   ASSERT_NE(set, nullptr);
@@ -869,6 +930,43 @@ TEST_F(ModuleRuntimeTest, RejectsBadArgumentsAndNullOutputs) {
   status = minikv::CreateCmd(registry(), {"HGETALL", "user:1", "extra"}, &cmd);
   ASSERT_TRUE(status.IsInvalidArgument());
   EXPECT_NE(status.ToString().find("HGETALL takes no extra arguments"),
+            std::string::npos);
+
+  status = minikv::CreateCmd(registry(), {"JSON.SET", "doc"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("path, value"), std::string::npos);
+
+  status = minikv::CreateCmd(
+      registry(), {"JSON.SET", "doc", "$", "{\"a\":1}", "BAD"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("NX or XX"), std::string::npos);
+
+  status = minikv::CreateCmd(
+      registry(), {"JSON.SET", "doc", "$", "{bad-json}"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("invalid JSON value"), std::string::npos);
+
+  status = minikv::CreateCmd(
+      registry(), {"JSON.GET", "doc", "INDENT"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("requires a value"), std::string::npos);
+
+  status = minikv::CreateCmd(registry(), {"JSON.MGET", "doc"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("one or more keys and a path"),
+            std::string::npos);
+
+  status = minikv::CreateCmd(registry(), {"JSON.TYPE", "doc", "$", "x"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("at most one path"), std::string::npos);
+
+  status = minikv::CreateCmd(registry(), {"JSON.TOGGLE", "doc"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("requires one path"), std::string::npos);
+
+  status = minikv::CreateCmd(registry(), {"JSON.NUMINCRBY", "doc", "$"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("requires path and increment"),
             std::string::npos);
 
   status = minikv::CreateCmd(registry(), {"SET", "str:1"}, &cmd);
@@ -1417,6 +1515,44 @@ TEST_F(ModuleRuntimeTest, TypeAndExistsExecuteAgainstEngine) {
   ASSERT_TRUE(response.status.ok());
   ASSERT_TRUE(response.reply.IsInteger());
   EXPECT_EQ(response.reply.integer(), 2);
+}
+
+TEST_F(ModuleRuntimeTest, JsonCommandsExecuteAgainstEngine) {
+  minikv::CommandResponse response =
+      CreateFromParts({"JSON.SET", "doc:json", "$",
+                       "{\"name\":\"alice\",\"flag\":true,\"n\":1}"})
+          ->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsSimpleString());
+  EXPECT_EQ(response.reply.string(), "OK");
+
+  response = CreateFromParts({"TYPE", "doc:json"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ExpectBulkString(response.reply, "json");
+
+  response = CreateFromParts({"JSON.GET", "doc:json", "$.name"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ExpectBulkString(response.reply, "[\"alice\"]");
+
+  response =
+      CreateFromParts({"JSON.NUMINCRBY", "doc:json", "$.n", "2"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ExpectBulkString(response.reply, "[3]");
+
+  response = CreateFromParts({"JSON.TOGGLE", "doc:json", "$.flag"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsArray());
+  ASSERT_EQ(response.reply.array().size(), 1U);
+  ASSERT_TRUE(response.reply.array()[0].IsInteger());
+  EXPECT_EQ(response.reply.array()[0].integer(), 0);
+
+  response = CreateFromParts({"JSON.MGET", "doc:json", "missing", "$.name"})
+                 ->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsArray());
+  ASSERT_EQ(response.reply.array().size(), 2U);
+  ExpectBulkString(response.reply.array()[0], "[\"alice\"]");
+  ASSERT_TRUE(response.reply.array()[1].IsNull());
 }
 
 TEST_F(ModuleRuntimeTest, ExpireTtlPttlAndPersistExecuteAgainstEngine) {

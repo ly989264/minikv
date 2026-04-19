@@ -73,6 +73,8 @@ set(MINIKV_INTERNAL_HEADERS
   src/types/hash/hash_module.h
   src/types/hash/hash_observer.h
   src/types/hash/hash_types.h
+  src/types/json/json_module.h
+  src/types/json/json_path.h
   src/types/list/list_module.h
   src/types/string/string_bridge.h
   src/types/string/string_module.h
@@ -103,6 +105,8 @@ set(MINIKV_SOURCES
   src/core/key_service.cc
   src/types/bitmap/bitmap_module.cc
   src/types/hash/hash_module.cc
+  src/types/json/json_module.cc
+  src/types/json/json_path.cc
   src/types/list/list_module.cc
   src/types/string/string_module.cc
   src/types/set/set_module.cc
@@ -122,7 +126,8 @@ add_library(minikv_core STATIC
 
 target_include_directories(minikv_core
   PUBLIC
-    ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR})
 
 target_compile_features(minikv_core PUBLIC cxx_std_17)
 target_link_libraries(minikv_core
@@ -155,6 +160,7 @@ if(BUILD_TESTING)
   minikv_add_test(minikv_command_registry_test
     tests/command_test/command_registry_test.cc)
   minikv_add_test(minikv_hash_module_test tests/type_test/hash_module_test.cc)
+  minikv_add_test(minikv_json_module_test tests/type_test/json_module_test.cc)
   minikv_add_test(minikv_list_module_test tests/type_test/list_module_test.cc)
   minikv_add_test(minikv_string_module_test tests/type_test/string_module_test.cc)
   minikv_add_test(minikv_bitmap_module_test tests/type_test/bitmap_module_test.cc)

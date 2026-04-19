@@ -22,6 +22,7 @@ enum class ObjectType : uint8_t {
   kSet = 4,
   kZSet = 5,
   kStream = 6,
+  kJson = 7,
 };
 
 enum class ObjectEncoding : uint8_t {
@@ -32,6 +33,7 @@ enum class ObjectEncoding : uint8_t {
   kZSetSkiplist = 5,
   kStreamRadixTree = 6,
   kZSetGeo = 7,
+  kJsonDocument = 8,
 };
 
 struct KeyMetadata {

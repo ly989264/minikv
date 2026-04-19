@@ -46,6 +46,15 @@ Supported commands:
 - `GETBIT`
 - `SETBIT`
 - `BITCOUNT`
+- `JSON.SET`
+- `JSON.GET`
+- `JSON.MGET`
+- `JSON.DEL`
+- `JSON.FORGET`
+- `JSON.TYPE`
+- `JSON.CLEAR`
+- `JSON.TOGGLE`
+- `JSON.NUMINCRBY`
 - `HSET`
 - `HGETALL`
 - `HDEL`
@@ -95,6 +104,9 @@ Those commands are registered by builtin modules during startup:
 - `StringModule`: `SET`, `GET`, `STRLEN`
 - `BitmapModule`: `GETBIT`, `SETBIT`, `BITCOUNT`
 - `HashModule`: `HSET`, `HGETALL`, `HDEL`
+- `JsonModule`: `JSON.SET`, `JSON.GET`, `JSON.MGET`, `JSON.DEL`,
+  `JSON.FORGET`, `JSON.TYPE`, `JSON.CLEAR`, `JSON.TOGGLE`,
+  `JSON.NUMINCRBY`
 - `ListModule`: `LPUSH`, `LPOP`, `LRANGE`, `RPUSH`, `RPOP`, `LREM`, `LTRIM`,
   `LLEN`
 - `SetModule`: `SADD`, `SCARD`, `SMEMBERS`, `SISMEMBER`, `SPOP`,

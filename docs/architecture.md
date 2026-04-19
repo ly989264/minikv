@@ -57,6 +57,8 @@ Public behavior is intentionally narrow today:
 - supported commands:
   `PING`, `TYPE`, `EXISTS`, `DEL`, `EXPIRE`, `TTL`, `PTTL`, `PERSIST`,
   `SET`, `GET`, `STRLEN`, `GETBIT`, `SETBIT`, `BITCOUNT`,
+  `JSON.SET`, `JSON.GET`, `JSON.MGET`, `JSON.DEL`, `JSON.FORGET`,
+  `JSON.TYPE`, `JSON.CLEAR`, `JSON.TOGGLE`, `JSON.NUMINCRBY`,
   `HSET`, `HGETALL`, `HDEL`,
   `LPUSH`, `LPOP`, `LRANGE`, `RPUSH`, `RPOP`, `LREM`, `LTRIM`, `LLEN`,
   `SADD`, `SCARD`, `SMEMBERS`, `SISMEMBER`, `SPOP`, `SRANDMEMBER`, `SREM`,
@@ -64,7 +66,7 @@ Public behavior is intentionally narrow today:
   `ZRANGEBYLEX`, `ZRANGEBYSCORE`, `ZRANK`, `ZREM`, `ZSCORE`,
   `GEOADD`, `GEOPOS`, `GEOHASH`, `GEODIST`, `GEOSEARCH`,
   `XADD`, `XTRIM`, `XDEL`, `XLEN`, `XRANGE`, `XREVRANGE`, `XREAD`
-- supported data types: string, hash, list, set, zset, stream
+- supported data types: string, hash, json, list, set, zset, stream
 - supported deployment shape: single process, POSIX server path
 - supported module shape: builtin modules only, with no external ABI
 - search wiring is still limited to prep infrastructure; there is no builtin
@@ -113,11 +115,12 @@ Builtin module load order is fixed:
 2. `StringModule`
 3. `BitmapModule`
 4. `HashModule`
-5. `ListModule`
-6. `SetModule`
-7. `ZSetModule`
-8. `GeoModule`
-9. `StreamModule`
+5. `JsonModule`
+6. `ListModule`
+7. `SetModule`
+8. `ZSetModule`
+9. `GeoModule`
+10. `StreamModule`
 
 Current command ownership:
 
@@ -126,6 +129,9 @@ Current command ownership:
 - `StringModule`: `SET`, `GET`, `STRLEN`
 - `BitmapModule`: `GETBIT`, `SETBIT`, `BITCOUNT`
 - `HashModule`: `HSET`, `HGETALL`, `HDEL`
+- `JsonModule`: `JSON.SET`, `JSON.GET`, `JSON.MGET`, `JSON.DEL`,
+  `JSON.FORGET`, `JSON.TYPE`, `JSON.CLEAR`, `JSON.TOGGLE`,
+  `JSON.NUMINCRBY`
 - `ListModule`: `LPUSH`, `LPOP`, `LRANGE`, `RPUSH`, `RPOP`, `LREM`, `LTRIM`,
   `LLEN`
 - `SetModule`: `SADD`, `SCARD`, `SMEMBERS`, `SISMEMBER`, `SPOP`,

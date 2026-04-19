@@ -16,6 +16,8 @@ Current user-visible scope:
 - supported commands:
   `PING`, `TYPE`, `EXISTS`, `DEL`, `EXPIRE`, `TTL`, `PTTL`, `PERSIST`,
   `SET`, `GET`, `STRLEN`, `GETBIT`, `SETBIT`, `BITCOUNT`,
+  `JSON.SET`, `JSON.GET`, `JSON.MGET`, `JSON.DEL`, `JSON.FORGET`,
+  `JSON.TYPE`, `JSON.CLEAR`, `JSON.TOGGLE`, `JSON.NUMINCRBY`,
   `HSET`, `HGETALL`, `HDEL`,
   `LPUSH`, `LPOP`, `LRANGE`, `RPUSH`, `RPOP`, `LREM`, `LTRIM`, `LLEN`,
   `SADD`, `SCARD`, `SMEMBERS`, `SISMEMBER`, `SPOP`, `SRANDMEMBER`, `SREM`,
@@ -23,7 +25,7 @@ Current user-visible scope:
   `ZRANGEBYLEX`, `ZRANGEBYSCORE`, `ZRANK`, `ZREM`, `ZSCORE`,
   `GEOADD`, `GEOPOS`, `GEOHASH`, `GEODIST`, `GEOSEARCH`,
   `XADD`, `XTRIM`, `XDEL`, `XLEN`, `XRANGE`, `XREVRANGE`, `XREAD`
-- supported data types: string, hash, list, set, zset, stream
+- supported data types: string, hash, json, list, set, zset, stream
 - deployment shape: one POSIX process exposing a TCP server
 - module shape: builtin modules only
 
@@ -56,8 +58,8 @@ Important behavior:
 - `MiniKV::Open()` opens RocksDB before publishing the runtime
 - builtin modules load through `ModuleManager`
 - current builtin load order is `CoreModule`, `StringModule`, `BitmapModule`,
-  `HashModule`, `ListModule`, `SetModule`, `ZSetModule`, `GeoModule`, then
-  `StreamModule`
+  `HashModule`, `JsonModule`, `ListModule`, `SetModule`, `ZSetModule`,
+  `GeoModule`, then `StreamModule`
 - current module support is builtin-only and source-level only
 - `MiniKV` exists to share runtime state with `NetworkServer`
 
@@ -118,7 +120,7 @@ This layer:
 - returns a transport-facing `CommandResponse`
 
 Builtin modules register their command families during `OnLoad()`: core,
-string, hash, list, set, zset, geo, and stream.
+string, bitmap, hash, json, list, set, zset, geo, and stream.
 
 ### `src/execution/scheduler/*` and `src/execution/worker/*`
 

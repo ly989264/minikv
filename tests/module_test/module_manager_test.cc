@@ -9,6 +9,7 @@
 #include "types/bitmap/bitmap_module.h"
 #include "core/core_module.h"
 #include "types/hash/hash_module.h"
+#include "types/json/json_module.h"
 #include "types/list/list_module.h"
 #include "types/string/string_module.h"
 #include "types/set/set_module.h"
@@ -160,6 +161,7 @@ TEST(ModuleManagerTest, BuiltinModulesLoadIntoUnifiedRegistry) {
   modules.push_back(std::make_unique<minikv::StringModule>());
   modules.push_back(std::make_unique<minikv::BitmapModule>());
   modules.push_back(std::make_unique<minikv::HashModule>());
+  modules.push_back(std::make_unique<minikv::JsonModule>());
   modules.push_back(std::make_unique<minikv::ListModule>());
   modules.push_back(std::make_unique<minikv::SetModule>());
   modules.push_back(std::make_unique<minikv::ZSetModule>());
@@ -179,6 +181,10 @@ TEST(ModuleManagerTest, BuiltinModulesLoadIntoUnifiedRegistry) {
   const minikv::CmdRegistration* hgetall =
       manager.command_registry().Find("HGETALL");
   const minikv::CmdRegistration* hdel = manager.command_registry().Find("HDEL");
+  const minikv::CmdRegistration* json_set =
+      manager.command_registry().Find("JSON.SET");
+  const minikv::CmdRegistration* json_get =
+      manager.command_registry().Find("JSON.GET");
   const minikv::CmdRegistration* set = manager.command_registry().Find("SET");
   const minikv::CmdRegistration* get = manager.command_registry().Find("GET");
   const minikv::CmdRegistration* strlen =
@@ -261,6 +267,8 @@ TEST(ModuleManagerTest, BuiltinModulesLoadIntoUnifiedRegistry) {
   ASSERT_NE(hset, nullptr);
   ASSERT_NE(hgetall, nullptr);
   ASSERT_NE(hdel, nullptr);
+  ASSERT_NE(json_set, nullptr);
+  ASSERT_NE(json_get, nullptr);
   ASSERT_NE(set, nullptr);
   ASSERT_NE(get, nullptr);
   ASSERT_NE(strlen, nullptr);
@@ -312,6 +320,8 @@ TEST(ModuleManagerTest, BuiltinModulesLoadIntoUnifiedRegistry) {
   EXPECT_EQ(hset->owner_module, "hash");
   EXPECT_EQ(hgetall->owner_module, "hash");
   EXPECT_EQ(hdel->owner_module, "hash");
+  EXPECT_EQ(json_set->owner_module, "json");
+  EXPECT_EQ(json_get->owner_module, "json");
   EXPECT_EQ(set->owner_module, "string");
   EXPECT_EQ(get->owner_module, "string");
   EXPECT_EQ(strlen->owner_module, "string");

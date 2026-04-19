@@ -41,6 +41,7 @@ The baseline test matrix is:
 - `minikv_module_iterator_test`
 - `minikv_background_executor_test`
 - `minikv_hash_module_test`
+- `minikv_json_module_test`
 - `minikv_list_module_test`
 - `minikv_string_module_test`
 - `minikv_bitmap_module_test`

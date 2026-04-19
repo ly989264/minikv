@@ -12,6 +12,9 @@ Current builtin modules:
 - `StringModule`: `SET`, `GET`, `STRLEN`
 - `BitmapModule`: `GETBIT`, `SETBIT`, `BITCOUNT`
 - `HashModule`: `HSET`, `HGETALL`, `HDEL`
+- `JsonModule`: `JSON.SET`, `JSON.GET`, `JSON.MGET`, `JSON.DEL`,
+  `JSON.FORGET`, `JSON.TYPE`, `JSON.CLEAR`, `JSON.TOGGLE`,
+  `JSON.NUMINCRBY`
 - `ListModule`: `LPUSH`, `LPOP`, `LRANGE`, `RPUSH`, `RPOP`, `LREM`, `LTRIM`,
   `LLEN`
 - `SetModule`: `SADD`, `SCARD`, `SMEMBERS`, `SISMEMBER`, `SPOP`,
@@ -24,7 +27,7 @@ Current builtin modules:
 
 Current user-visible data model:
 
-- string, hash, list, set, zset, and stream keys
+- string, hash, json, list, set, zset, and stream keys
 - per-key metadata with live, expired, and tombstone lifecycle states
 - module-private storage keyspaces in a shared RocksDB `module` column family
 
@@ -93,6 +96,8 @@ from the metadata recorded in `third_party/rocksdb/linux-x86_64/BUNDLE_INFO.env`
   exported string bridge
 - `src/types/bitmap/`: bitmap commands layered on shared string storage
 - `src/types/hash/`: hash commands, hash storage semantics, and observer bridge
+- `src/types/json/`: JSON document commands, path parsing, and document
+  storage semantics
 - `src/types/list/`: list commands and list storage semantics
 - `src/types/set/`: set commands and set storage semantics
 - `src/types/geo/`: geospatial commands and geo sidecar storage semantics
@@ -102,5 +107,7 @@ from the metadata recorded in `third_party/rocksdb/linux-x86_64/BUNDLE_INFO.env`
   tree yet in this standalone project
 - `tests/`: unit and integration tests
 - `tools/`: build, smoke, and maintenance scripts
+- `third_party/minijson/`: checked-in header-only JSON parser/serializer used
+  for offline JSON command support
 - `third_party/rocksdb/linux-x86_64/`: committed RocksDB headers, shared
   library, symlinks, and bundle metadata for Linux container builds
