@@ -17,6 +17,7 @@
 #include "types/list/list_module.h"
 #include "types/string/string_module.h"
 #include "types/set/set_module.h"
+#include "types/zset/zset_module.h"
 #include "rocksdb/db.h"
 
 namespace {
@@ -178,6 +179,9 @@ class ModuleRuntimeTest : public ::testing::Test {
     auto set_module = std::make_unique<minikv::SetModule>();
     set_module_ = set_module.get();
     modules.push_back(std::move(set_module));
+    auto zset_module = std::make_unique<minikv::ZSetModule>();
+    zset_module_ = zset_module.get();
+    modules.push_back(std::move(zset_module));
 
     module_manager_ = std::make_unique<minikv::ModuleManager>(
         storage_engine_.get(), scheduler_.get(), std::move(modules));
@@ -215,6 +219,7 @@ class ModuleRuntimeTest : public ::testing::Test {
   minikv::StringModule* string_module_ = nullptr;
   minikv::ListModule* list_module_ = nullptr;
   minikv::SetModule* set_module_ = nullptr;
+  minikv::ZSetModule* zset_module_ = nullptr;
 };
 
 TEST_F(ModuleRuntimeTest, FindsRegisteredCommandsByName) {
@@ -391,6 +396,73 @@ TEST_F(ModuleRuntimeTest, FindsRegisteredCommandsByName) {
   EXPECT_EQ(srem->name, "SREM");
   EXPECT_EQ(srem->owner_module, "set");
   ExpectFlags(srem->flags, false, true, false, true);
+
+  const minikv::CmdRegistration* zadd = registry().Find("ZADD");
+  ASSERT_NE(zadd, nullptr);
+  EXPECT_EQ(zadd->name, "ZADD");
+  EXPECT_EQ(zadd->owner_module, "zset");
+  ExpectFlags(zadd->flags, false, true, true, false);
+
+  const minikv::CmdRegistration* zcard = registry().Find("ZCARD");
+  ASSERT_NE(zcard, nullptr);
+  EXPECT_EQ(zcard->name, "ZCARD");
+  EXPECT_EQ(zcard->owner_module, "zset");
+  ExpectFlags(zcard->flags, true, false, true, false);
+
+  const minikv::CmdRegistration* zcount = registry().Find("ZCOUNT");
+  ASSERT_NE(zcount, nullptr);
+  EXPECT_EQ(zcount->name, "ZCOUNT");
+  EXPECT_EQ(zcount->owner_module, "zset");
+  ExpectFlags(zcount->flags, true, false, false, true);
+
+  const minikv::CmdRegistration* zincrby = registry().Find("ZINCRBY");
+  ASSERT_NE(zincrby, nullptr);
+  EXPECT_EQ(zincrby->name, "ZINCRBY");
+  EXPECT_EQ(zincrby->owner_module, "zset");
+  ExpectFlags(zincrby->flags, false, true, true, false);
+
+  const minikv::CmdRegistration* zlexcount = registry().Find("ZLEXCOUNT");
+  ASSERT_NE(zlexcount, nullptr);
+  EXPECT_EQ(zlexcount->name, "ZLEXCOUNT");
+  EXPECT_EQ(zlexcount->owner_module, "zset");
+  ExpectFlags(zlexcount->flags, true, false, false, true);
+
+  const minikv::CmdRegistration* zrange = registry().Find("ZRANGE");
+  ASSERT_NE(zrange, nullptr);
+  EXPECT_EQ(zrange->name, "ZRANGE");
+  EXPECT_EQ(zrange->owner_module, "zset");
+  ExpectFlags(zrange->flags, true, false, false, true);
+
+  const minikv::CmdRegistration* zrangebylex = registry().Find("ZRANGEBYLEX");
+  ASSERT_NE(zrangebylex, nullptr);
+  EXPECT_EQ(zrangebylex->name, "ZRANGEBYLEX");
+  EXPECT_EQ(zrangebylex->owner_module, "zset");
+  ExpectFlags(zrangebylex->flags, true, false, false, true);
+
+  const minikv::CmdRegistration* zrangebyscore =
+      registry().Find("ZRANGEBYSCORE");
+  ASSERT_NE(zrangebyscore, nullptr);
+  EXPECT_EQ(zrangebyscore->name, "ZRANGEBYSCORE");
+  EXPECT_EQ(zrangebyscore->owner_module, "zset");
+  ExpectFlags(zrangebyscore->flags, true, false, false, true);
+
+  const minikv::CmdRegistration* zrank = registry().Find("ZRANK");
+  ASSERT_NE(zrank, nullptr);
+  EXPECT_EQ(zrank->name, "ZRANK");
+  EXPECT_EQ(zrank->owner_module, "zset");
+  ExpectFlags(zrank->flags, true, false, false, true);
+
+  const minikv::CmdRegistration* zrem = registry().Find("ZREM");
+  ASSERT_NE(zrem, nullptr);
+  EXPECT_EQ(zrem->name, "ZREM");
+  EXPECT_EQ(zrem->owner_module, "zset");
+  ExpectFlags(zrem->flags, false, true, false, true);
+
+  const minikv::CmdRegistration* zscore = registry().Find("ZSCORE");
+  ASSERT_NE(zscore, nullptr);
+  EXPECT_EQ(zscore->name, "ZSCORE");
+  EXPECT_EQ(zscore->owner_module, "zset");
+  ExpectFlags(zscore->flags, true, false, true, false);
 }
 
 TEST_F(ModuleRuntimeTest, ReturnsNullForUnknownRegistrations) {
@@ -527,6 +599,25 @@ TEST_F(ModuleRuntimeTest, CreatesCommandsFromRespParts) {
       minikv::CreateCmd(registry(), {"srem", "set:1", "a"}, &lower_set).ok());
   ASSERT_NE(lower_set, nullptr);
   EXPECT_EQ(lower_set->Name(), "SREM");
+
+  std::unique_ptr<minikv::Cmd> zadd;
+  ASSERT_TRUE(minikv::CreateCmd(registry(),
+                                {"ZADD", "zset:1", "1", "a", "2", "b"},
+                                &zadd)
+                  .ok());
+  ASSERT_NE(zadd, nullptr);
+  EXPECT_EQ(zadd->Name(), "ZADD");
+  EXPECT_EQ(zadd->RouteKey(), "zset:1");
+  ExpectLockPlan(zadd->lock_plan(), minikv::Cmd::LockPlan::Kind::kSingle,
+                 "zset:1", {});
+  ExpectFlags(zadd->Flags(), false, true, true, false);
+
+  std::unique_ptr<minikv::Cmd> lower_zset;
+  ASSERT_TRUE(
+      minikv::CreateCmd(registry(), {"zscore", "zset:1", "a"}, &lower_zset)
+          .ok());
+  ASSERT_NE(lower_zset, nullptr);
+  EXPECT_EQ(lower_zset->Name(), "ZSCORE");
 }
 
 TEST_F(ModuleRuntimeTest, RejectsBadArgumentsAndNullOutputs) {
@@ -685,6 +776,93 @@ TEST_F(ModuleRuntimeTest, RejectsBadArgumentsAndNullOutputs) {
   status = minikv::CreateCmd(registry(), {"SREM", "set:1"}, &cmd);
   ASSERT_TRUE(status.IsInvalidArgument());
   EXPECT_NE(status.ToString().find("SREM requires at least one member"),
+            std::string::npos);
+
+  status = minikv::CreateCmd(registry(), {"ZADD", "zset:1"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("ZADD requires score/member pairs"),
+            std::string::npos);
+
+  status =
+      minikv::CreateCmd(registry(), {"ZADD", "zset:1", "1", "a", "2"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("ZADD requires score/member pairs"),
+            std::string::npos);
+
+  status =
+      minikv::CreateCmd(registry(), {"ZADD", "zset:1", "bad", "a"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("ZADD requires valid score"),
+            std::string::npos);
+
+  status = minikv::CreateCmd(registry(), {"ZCARD", "zset:1", "extra"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("ZCARD takes no extra arguments"),
+            std::string::npos);
+
+  status = minikv::CreateCmd(registry(), {"ZCOUNT", "zset:1", "0"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("ZCOUNT requires min and max"),
+            std::string::npos);
+
+  status = minikv::CreateCmd(registry(), {"ZINCRBY", "zset:1"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("ZINCRBY requires increment and member"),
+            std::string::npos);
+
+  status =
+      minikv::CreateCmd(registry(), {"ZINCRBY", "zset:1", "bad", "a"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("ZINCRBY requires valid increment"),
+            std::string::npos);
+
+  status = minikv::CreateCmd(registry(), {"ZLEXCOUNT", "zset:1", "-"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("ZLEXCOUNT requires min and max"),
+            std::string::npos);
+
+  status = minikv::CreateCmd(registry(), {"ZRANGE", "zset:1", "0"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("ZRANGE requires start and stop"),
+            std::string::npos);
+
+  status =
+      minikv::CreateCmd(registry(), {"ZRANGE", "zset:1", "bad", "1"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("ZRANGE requires integer start"),
+            std::string::npos);
+
+  status =
+      minikv::CreateCmd(registry(), {"ZRANGE", "zset:1", "0", "bad"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("ZRANGE requires integer stop"),
+            std::string::npos);
+
+  status =
+      minikv::CreateCmd(registry(), {"ZRANGEBYLEX", "zset:1", "-"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("ZRANGEBYLEX requires min and max"),
+            std::string::npos);
+
+  status =
+      minikv::CreateCmd(registry(), {"ZRANGEBYSCORE", "zset:1", "0"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("ZRANGEBYSCORE requires min and max"),
+            std::string::npos);
+
+  status = minikv::CreateCmd(registry(), {"ZRANK", "zset:1"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("ZRANK requires member"),
+            std::string::npos);
+
+  status = minikv::CreateCmd(registry(), {"ZREM", "zset:1"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("ZREM requires at least one member"),
+            std::string::npos);
+
+  status = minikv::CreateCmd(registry(), {"ZSCORE", "zset:1"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("ZSCORE requires member"),
             std::string::npos);
 
   status = minikv::CreateCmd(registry(), {"PING", "extra"}, &cmd);
@@ -1079,6 +1257,78 @@ TEST_F(ModuleRuntimeTest, SetCommandsExecuteAgainstEngine) {
   std::vector<std::string> members;
   ASSERT_TRUE(set_module_->ReadMembers("set:cmd", &members).ok());
   ExpectMembersUnordered(members, {"b"});
+}
+
+TEST_F(ModuleRuntimeTest, ZSetCommandsExecuteAgainstEngine) {
+  minikv::CommandResponse response =
+      CreateFromParts({"ZADD", "zset:cmd", "2", "b", "1", "a", "2", "c"})
+          ->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsInteger());
+  EXPECT_EQ(response.reply.integer(), 3);
+
+  response = CreateFromParts({"ZCARD", "zset:cmd"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsInteger());
+  EXPECT_EQ(response.reply.integer(), 3);
+
+  response = CreateFromParts({"ZRANGE", "zset:cmd", "0", "-1"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ExpectBulkStringArray(response.reply, {"a", "b", "c"});
+
+  response = CreateFromParts({"ZCOUNT", "zset:cmd", "2", "2"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsInteger());
+  EXPECT_EQ(response.reply.integer(), 2);
+
+  response = CreateFromParts({"ZRANGEBYSCORE", "zset:cmd", "(1", "+inf"})
+                 ->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ExpectBulkStringArray(response.reply, {"b", "c"});
+
+  response = CreateFromParts({"ZSCORE", "zset:cmd", "b"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ExpectBulkString(response.reply, "2");
+
+  response = CreateFromParts({"ZRANK", "zset:cmd", "c"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsInteger());
+  EXPECT_EQ(response.reply.integer(), 2);
+
+  response = CreateFromParts({"ZINCRBY", "zset:cmd", "2", "a"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ExpectBulkString(response.reply, "3");
+
+  response = CreateFromParts({"ZRANGE", "zset:cmd", "0", "-1"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ExpectBulkStringArray(response.reply, {"b", "c", "a"});
+
+  response = CreateFromParts({"ZADD", "zset:lex", "0", "aa", "0", "ab", "0",
+                              "ac", "0", "ad"})
+                 ->Execute();
+  ASSERT_TRUE(response.status.ok());
+  EXPECT_EQ(response.reply.integer(), 4);
+
+  response = CreateFromParts({"ZLEXCOUNT", "zset:lex", "[ab", "(ad"})
+                 ->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsInteger());
+  EXPECT_EQ(response.reply.integer(), 2);
+
+  response =
+      CreateFromParts({"ZRANGEBYLEX", "zset:lex", "[ab", "(ad"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ExpectBulkStringArray(response.reply, {"ab", "ac"});
+
+  response = CreateFromParts({"ZREM", "zset:cmd", "b", "x"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsInteger());
+  EXPECT_EQ(response.reply.integer(), 1);
+
+  double score = 0;
+  bool found = false;
+  ASSERT_TRUE(zset_module_->Score("zset:cmd", "b", &score, &found).ok());
+  EXPECT_FALSE(found);
 }
 
 TEST_F(ModuleRuntimeTest, ListCommandsExecuteAgainstEngine) {

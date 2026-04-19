@@ -75,6 +75,7 @@ set(MINIKV_INTERNAL_HEADERS
   src/types/list/list_module.h
   src/types/string/string_module.h
   src/types/set/set_module.h
+  src/types/zset/zset_module.h
   src/network/resp_parser.h
   src/execution/worker/key_lock_table.h
   src/execution/worker/worker.h)
@@ -99,6 +100,7 @@ set(MINIKV_SOURCES
   src/types/list/list_module.cc
   src/types/string/string_module.cc
   src/types/set/set_module.cc
+  src/types/zset/zset_module.cc
   src/network/network_server.cc
   src/network/resp_parser.cc
   src/execution/worker/key_lock_table.cc
@@ -148,6 +150,7 @@ if(BUILD_TESTING)
   minikv_add_test(minikv_list_module_test tests/type_test/list_module_test.cc)
   minikv_add_test(minikv_string_module_test tests/type_test/string_module_test.cc)
   minikv_add_test(minikv_set_module_test tests/type_test/set_module_test.cc)
+  minikv_add_test(minikv_zset_module_test tests/type_test/zset_module_test.cc)
   minikv_add_test(minikv_network_test tests/network_test/server_test.cc)
   minikv_add_test(minikv_reply_encode_test
     tests/network_test/reply_encode_test.cc)

@@ -9,13 +9,18 @@ Current builtin modules:
 
 - `CoreModule`: `PING`, `TYPE`, `EXISTS`, `DEL`, `EXPIRE`, `TTL`, `PTTL`,
   `PERSIST`
+- `StringModule`: `SET`, `GET`, `STRLEN`
 - `HashModule`: `HSET`, `HGETALL`, `HDEL`
+- `ListModule`: `LPUSH`, `LPOP`, `LRANGE`, `RPUSH`, `RPOP`, `LREM`, `LTRIM`,
+  `LLEN`
 - `SetModule`: `SADD`, `SCARD`, `SMEMBERS`, `SISMEMBER`, `SPOP`,
   `SRANDMEMBER`, `SREM`
+- `ZSetModule`: `ZADD`, `ZCARD`, `ZCOUNT`, `ZINCRBY`, `ZLEXCOUNT`, `ZRANGE`,
+  `ZRANGEBYLEX`, `ZRANGEBYSCORE`, `ZRANK`, `ZREM`, `ZSCORE`
 
 Current user-visible data model:
 
-- hash and set keys
+- string, hash, list, set, and zset keys
 - per-key metadata with live, expired, and tombstone lifecycle states
 - module-private storage keyspaces in a shared RocksDB `module` column family
 
@@ -80,8 +85,11 @@ from the metadata recorded in `third_party/rocksdb/linux-x86_64/BUNDLE_INFO.env`
 - `src/runtime/module/`: builtin module SPI, lifecycle manager, exports, and
   module services
 - `src/core/`: protocol-level builtin commands and key lifecycle services
+- `src/types/string/`: string commands and string storage semantics
 - `src/types/hash/`: hash commands, hash storage semantics, and observer bridge
+- `src/types/list/`: list commands and list storage semantics
 - `src/types/set/`: set commands and set storage semantics
+- `src/types/zset/`: sorted-set commands and zset storage semantics
 - `src/`: implementation sources. There is no `include/minikv/` public header
   tree yet in this standalone project
 - `tests/`: unit and integration tests

@@ -11,6 +11,7 @@
 #include "types/list/list_module.h"
 #include "types/string/string_module.h"
 #include "types/set/set_module.h"
+#include "types/zset/zset_module.h"
 
 namespace {
 
@@ -157,6 +158,7 @@ TEST(ModuleManagerTest, BuiltinModulesLoadIntoUnifiedRegistry) {
   modules.push_back(std::make_unique<minikv::HashModule>());
   modules.push_back(std::make_unique<minikv::ListModule>());
   modules.push_back(std::make_unique<minikv::SetModule>());
+  modules.push_back(std::make_unique<minikv::ZSetModule>());
 
   minikv::Scheduler scheduler(2, 16);
   minikv::ModuleManager manager(nullptr, &scheduler, std::move(modules));
@@ -198,6 +200,26 @@ TEST(ModuleManagerTest, BuiltinModulesLoadIntoUnifiedRegistry) {
   const minikv::CmdRegistration* srandmember =
       manager.command_registry().Find("SRANDMEMBER");
   const minikv::CmdRegistration* srem = manager.command_registry().Find("SREM");
+  const minikv::CmdRegistration* zadd = manager.command_registry().Find("ZADD");
+  const minikv::CmdRegistration* zcard =
+      manager.command_registry().Find("ZCARD");
+  const minikv::CmdRegistration* zcount =
+      manager.command_registry().Find("ZCOUNT");
+  const minikv::CmdRegistration* zincrby =
+      manager.command_registry().Find("ZINCRBY");
+  const minikv::CmdRegistration* zlexcount =
+      manager.command_registry().Find("ZLEXCOUNT");
+  const minikv::CmdRegistration* zrange =
+      manager.command_registry().Find("ZRANGE");
+  const minikv::CmdRegistration* zrangebylex =
+      manager.command_registry().Find("ZRANGEBYLEX");
+  const minikv::CmdRegistration* zrangebyscore =
+      manager.command_registry().Find("ZRANGEBYSCORE");
+  const minikv::CmdRegistration* zrank =
+      manager.command_registry().Find("ZRANK");
+  const minikv::CmdRegistration* zrem = manager.command_registry().Find("ZREM");
+  const minikv::CmdRegistration* zscore =
+      manager.command_registry().Find("ZSCORE");
 
   ASSERT_NE(ping, nullptr);
   ASSERT_NE(type, nullptr);
@@ -224,6 +246,17 @@ TEST(ModuleManagerTest, BuiltinModulesLoadIntoUnifiedRegistry) {
   ASSERT_NE(spop, nullptr);
   ASSERT_NE(srandmember, nullptr);
   ASSERT_NE(srem, nullptr);
+  ASSERT_NE(zadd, nullptr);
+  ASSERT_NE(zcard, nullptr);
+  ASSERT_NE(zcount, nullptr);
+  ASSERT_NE(zincrby, nullptr);
+  ASSERT_NE(zlexcount, nullptr);
+  ASSERT_NE(zrange, nullptr);
+  ASSERT_NE(zrangebylex, nullptr);
+  ASSERT_NE(zrangebyscore, nullptr);
+  ASSERT_NE(zrank, nullptr);
+  ASSERT_NE(zrem, nullptr);
+  ASSERT_NE(zscore, nullptr);
   EXPECT_EQ(ping->owner_module, "core");
   EXPECT_EQ(type->owner_module, "core");
   EXPECT_EQ(exists->owner_module, "core");
@@ -249,6 +282,17 @@ TEST(ModuleManagerTest, BuiltinModulesLoadIntoUnifiedRegistry) {
   EXPECT_EQ(spop->owner_module, "set");
   EXPECT_EQ(srandmember->owner_module, "set");
   EXPECT_EQ(srem->owner_module, "set");
+  EXPECT_EQ(zadd->owner_module, "zset");
+  EXPECT_EQ(zcard->owner_module, "zset");
+  EXPECT_EQ(zcount->owner_module, "zset");
+  EXPECT_EQ(zincrby->owner_module, "zset");
+  EXPECT_EQ(zlexcount->owner_module, "zset");
+  EXPECT_EQ(zrange->owner_module, "zset");
+  EXPECT_EQ(zrangebylex->owner_module, "zset");
+  EXPECT_EQ(zrangebyscore->owner_module, "zset");
+  EXPECT_EQ(zrank->owner_module, "zset");
+  EXPECT_EQ(zrem->owner_module, "zset");
+  EXPECT_EQ(zscore->owner_module, "zset");
 }
 
 }  // namespace

@@ -12,6 +12,7 @@
 #include "types/list/list_module.h"
 #include "types/string/string_module.h"
 #include "types/set/set_module.h"
+#include "types/zset/zset_module.h"
 
 namespace minikv {
 namespace {
@@ -23,6 +24,7 @@ std::vector<std::unique_ptr<Module>> CreateBuiltinModules() {
   modules.push_back(std::make_unique<HashModule>());
   modules.push_back(std::make_unique<ListModule>());
   modules.push_back(std::make_unique<SetModule>());
+  modules.push_back(std::make_unique<ZSetModule>());
   return modules;
 }
 

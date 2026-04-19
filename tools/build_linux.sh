@@ -176,6 +176,7 @@ if [[ "${SKIP_TESTS}" -eq 0 ]]; then
     minikv_list_module_test
     minikv_string_module_test
     minikv_set_module_test
+    minikv_zset_module_test
     minikv_hash_bridge_test
     minikv_hash_observer_test
     minikv_module_manager_test

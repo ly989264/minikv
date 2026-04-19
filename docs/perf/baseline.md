@@ -106,14 +106,14 @@ the unit and integration tests:
 
 The current baseline applies to the current implementation surface:
 
-- supported user-visible data type: hash only
+- supported user-visible data types: string, hash, list, set, zset
 - supported server replies from builtin commands: simple string, integer, bulk
   string, flat array, and error
 - module SPI: builtin-only
 
 Explicitly out of scope for this baseline:
 
-- non-hash data types
+- unimplemented data types such as stream
 - external module loading or external ABI behavior
 - search commands including `FT.*`
 - benchmarking claims beyond the smoke script's simple latency samples

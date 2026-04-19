@@ -43,7 +43,11 @@ Shutdown order is the reverse:
 Current builtin load order is:
 
 1. `CoreModule`
-2. `HashModule`
+2. `StringModule`
+3. `HashModule`
+4. `ListModule`
+5. `SetModule`
+6. `ZSetModule`
 
 ## Startup Windows
 

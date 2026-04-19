@@ -38,8 +38,12 @@ The main responsibilities are:
   `src/execution/worker/`: command creation, command registry, reply tree,
   scheduler, keyed workers, and execution coordination
 - `src/core/`: protocol-level builtin commands and key lifecycle services
+- `src/types/string/`: string builtin module and string command handling
 - `src/types/hash/`: hash builtin module, exported indexing bridge, observer
   interface, whole-key delete handling, and command registrations
+- `src/types/list/`: list builtin module and list command handling
+- `src/types/set/`: set builtin module and set command handling
+- `src/types/zset/`: zset builtin module and sorted-set command handling
 - `src/storage/engine/` and `src/storage/encoding/`: RocksDB integration,
   snapshots, write batching, and key encoding rules
 
@@ -47,8 +51,13 @@ Public behavior is intentionally narrow today:
 
 - supported commands:
   `PING`, `TYPE`, `EXISTS`, `DEL`, `EXPIRE`, `TTL`, `PTTL`, `PERSIST`,
-  `HSET`, `HGETALL`, `HDEL`
-- supported data type: hash only
+  `SET`, `GET`, `STRLEN`,
+  `HSET`, `HGETALL`, `HDEL`,
+  `LPUSH`, `LPOP`, `LRANGE`, `RPUSH`, `RPOP`, `LREM`, `LTRIM`, `LLEN`,
+  `SADD`, `SCARD`, `SMEMBERS`, `SISMEMBER`, `SPOP`, `SRANDMEMBER`, `SREM`,
+  `ZADD`, `ZCARD`, `ZCOUNT`, `ZINCRBY`, `ZLEXCOUNT`, `ZRANGE`,
+  `ZRANGEBYLEX`, `ZRANGEBYSCORE`, `ZRANK`, `ZREM`, `ZSCORE`
+- supported data types: string, hash, list, set, zset
 - supported deployment shape: single process, POSIX server path
 - supported module shape: builtin modules only, with no external ABI
 - search wiring is still limited to prep infrastructure; there is no builtin
@@ -93,13 +102,24 @@ semantics:
 Builtin module load order is fixed:
 
 1. `CoreModule`
-2. `HashModule`
+2. `StringModule`
+3. `HashModule`
+4. `ListModule`
+5. `SetModule`
+6. `ZSetModule`
 
 Current command ownership:
 
 - `CoreModule`: `PING`, `TYPE`, `EXISTS`, `DEL`, `EXPIRE`, `TTL`, `PTTL`,
   `PERSIST`
+- `StringModule`: `SET`, `GET`, `STRLEN`
 - `HashModule`: `HSET`, `HGETALL`, `HDEL`
+- `ListModule`: `LPUSH`, `LPOP`, `LRANGE`, `RPUSH`, `RPOP`, `LREM`, `LTRIM`,
+  `LLEN`
+- `SetModule`: `SADD`, `SCARD`, `SMEMBERS`, `SISMEMBER`, `SPOP`,
+  `SRANDMEMBER`, `SREM`
+- `ZSetModule`: `ZADD`, `ZCARD`, `ZCOUNT`, `ZINCRBY`, `ZLEXCOUNT`, `ZRANGE`,
+  `ZRANGEBYLEX`, `ZRANGEBYSCORE`, `ZRANK`, `ZREM`, `ZSCORE`
 
 Important current boundaries:
 

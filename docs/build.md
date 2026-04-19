@@ -15,7 +15,10 @@ and verified in this standalone `minikv/` workspace.
 - `minikv_cmd_test`
 - `minikv_command_registry_test`
 - `minikv_hash_module_test`
+- `minikv_list_module_test`
+- `minikv_string_module_test`
 - `minikv_set_module_test`
+- `minikv_zset_module_test`
 - `minikv_network_test`
 - `minikv_reply_encode_test`
 - `minikv_scheduler_test`
@@ -113,7 +116,7 @@ Preferred helper script:
 - refreshes a top-level `compile_commands.json` symlink when the build
   directory lives inside the repository
 - builds the project
-- runs a fixed list of 15 test binaries directly unless `--skip-tests` is used
+- runs a fixed list of 18 test binaries directly unless `--skip-tests` is used
 
 If your authoritative build ran inside the Linux container but your editor is a
 host-side VS Code window on macOS, rewrite the recorded container paths for the
@@ -181,7 +184,7 @@ Defaults are defined in `src/runtime/config.h`.
 
 The standalone validation standard is:
 
-- all 15 test targets build successfully
+- all 18 test targets build successfully
 - `ctest --test-dir build --output-on-failure` works from the standalone build
   root
 - the committed RocksDB bundle can be used without re-fetching or recompiling
@@ -193,5 +196,5 @@ The standalone validation standard is:
 test entrypoint.
 
 `tools/build_linux.sh` also remains a supported developer entrypoint. It runs a
-fixed list of 15 test binaries directly after building, which is useful when
+fixed list of 18 test binaries directly after building, which is useful when
 you want a single command that both builds and validates the project.

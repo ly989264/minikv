@@ -15,8 +15,13 @@ Current user-visible scope:
 
 - supported commands:
   `PING`, `TYPE`, `EXISTS`, `DEL`, `EXPIRE`, `TTL`, `PTTL`, `PERSIST`,
-  `HSET`, `HGETALL`, `HDEL`
-- supported data type: hash only
+  `SET`, `GET`, `STRLEN`,
+  `HSET`, `HGETALL`, `HDEL`,
+  `LPUSH`, `LPOP`, `LRANGE`, `RPUSH`, `RPOP`, `LREM`, `LTRIM`, `LLEN`,
+  `SADD`, `SCARD`, `SMEMBERS`, `SISMEMBER`, `SPOP`, `SRANDMEMBER`, `SREM`,
+  `ZADD`, `ZCARD`, `ZCOUNT`, `ZINCRBY`, `ZLEXCOUNT`, `ZRANGE`,
+  `ZRANGEBYLEX`, `ZRANGEBYSCORE`, `ZRANK`, `ZREM`, `ZSCORE`
+- supported data types: string, hash, list, set, zset
 - deployment shape: one POSIX process exposing a TCP server
 - module shape: builtin modules only
 
@@ -48,7 +53,8 @@ Important behavior:
 
 - `MiniKV::Open()` opens RocksDB before publishing the runtime
 - builtin modules load through `ModuleManager`
-- current builtin load order is `CoreModule`, then `HashModule`
+- current builtin load order is `CoreModule`, `StringModule`, `HashModule`,
+  `ListModule`, `SetModule`, then `ZSetModule`
 - current module support is builtin-only and source-level only
 - `MiniKV` exists to share runtime state with `NetworkServer`
 
@@ -107,8 +113,8 @@ This layer:
 - derives a per-command lock plan: none, single-key, or multi-key
 - returns a transport-facing `CommandResponse`
 
-`CoreModule` registers the core commands and `HashModule` registers the hash
-commands during `OnLoad()`.
+Builtin modules register their command families during `OnLoad()`: core,
+string, hash, list, set, and zset.
 
 ### `src/execution/scheduler/*` and `src/execution/worker/*`
 
@@ -128,7 +134,7 @@ Correctness rule:
 - execute `Cmd::Execute()`
 - release the locks after completion
 
-Single-key commands such as `HSET` and `TYPE` use one route key. Multi-key
+Single-key commands such as `HSET`, `ZADD`, and `TYPE` use one route key. Multi-key
 commands such as `EXISTS` and `DEL` use a canonicalized multi-key lock plan.
 
 ### `src/core/*`
@@ -171,6 +177,19 @@ Current hash behavior:
 - deleting the final field writes a metadata tombstone instead of removing the
   metadata row
 - recreating an expired or tombstoned hash bumps its metadata version
+
+### `src/types/zset/*`
+
+Sorted-set semantics layer.
+
+`ZSetModule` is responsible for:
+
+- registering `ZADD`, `ZCARD`, `ZCOUNT`, `ZINCRBY`, `ZLEXCOUNT`, `ZRANGE`,
+  `ZRANGEBYLEX`, `ZRANGEBYSCORE`, `ZRANK`, `ZREM`, and `ZSCORE`
+- registering itself as the whole-key delete handler for zset values
+- maintaining member-to-score data plus a score-ordered secondary index in
+  module-private keyspaces
+- bumping metadata versions when recreating expired or tombstoned zsets
 
 ### `src/storage/engine/*`
 

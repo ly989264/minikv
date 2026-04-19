@@ -481,6 +481,88 @@ TEST_F(MiniKVServerTest, SetLifecycleAndRandomCommandsWorkOverNetwork) {
   close(fd);
 }
 
+TEST_F(MiniKVServerTest, ZSetCommandsWorkOverNetwork) {
+  const int fd = ConnectToServer(server_->port());
+
+  WriteAll(fd, EncodeCommand({"ZADD", "zset:1", "2", "b", "1", "a", "2", "c"}));
+  RespValue reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kInteger);
+  ASSERT_EQ(reply.integer, 3);
+
+  WriteAll(fd, EncodeCommand({"TYPE", "zset:1"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kBulkString);
+  ASSERT_EQ(reply.text, "zset");
+
+  WriteAll(fd, EncodeCommand({"ZCARD", "zset:1"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kInteger);
+  ASSERT_EQ(reply.integer, 3);
+
+  WriteAll(fd, EncodeCommand({"ZRANGE", "zset:1", "0", "-1"}));
+  reply = ReadRespValue(fd);
+  ExpectArrayTexts(reply, {"a", "b", "c"});
+
+  WriteAll(fd, EncodeCommand({"ZCOUNT", "zset:1", "2", "2"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kInteger);
+  ASSERT_EQ(reply.integer, 2);
+
+  WriteAll(fd, EncodeCommand({"ZRANGEBYSCORE", "zset:1", "(1", "+inf"}));
+  reply = ReadRespValue(fd);
+  ExpectArrayTexts(reply, {"b", "c"});
+
+  WriteAll(fd, EncodeCommand({"ZSCORE", "zset:1", "b"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kBulkString);
+  ASSERT_EQ(reply.text, "2");
+
+  WriteAll(fd, EncodeCommand({"ZRANK", "zset:1", "c"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kInteger);
+  ASSERT_EQ(reply.integer, 2);
+
+  WriteAll(fd, EncodeCommand({"ZINCRBY", "zset:1", "2", "a"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kBulkString);
+  ASSERT_EQ(reply.text, "3");
+
+  WriteAll(fd, EncodeCommand({"ZRANGE", "zset:1", "0", "-1"}));
+  reply = ReadRespValue(fd);
+  ExpectArrayTexts(reply, {"b", "c", "a"});
+
+  WriteAll(fd,
+           EncodeCommand({"ZADD", "zset:lex", "0", "aa", "0", "ab", "0", "ac",
+                          "0", "ad"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kInteger);
+  ASSERT_EQ(reply.integer, 4);
+
+  WriteAll(fd, EncodeCommand({"ZLEXCOUNT", "zset:lex", "[ab", "(ad"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kInteger);
+  ASSERT_EQ(reply.integer, 2);
+
+  WriteAll(fd, EncodeCommand({"ZRANGEBYLEX", "zset:lex", "[ab", "(ad"}));
+  reply = ReadRespValue(fd);
+  ExpectArrayTexts(reply, {"ab", "ac"});
+
+  WriteAll(fd, EncodeCommand({"ZREM", "zset:1", "b", "x"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kInteger);
+  ASSERT_EQ(reply.integer, 1);
+
+  WriteAll(fd, EncodeCommand({"ZSCORE", "zset:1", "b"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kNull);
+
+  WriteAll(fd, EncodeCommand({"ZRANK", "zset:1", "b"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kNull);
+
+  close(fd);
+}
+
 TEST_F(MiniKVServerTest, StringLifecycleCommandsWorkOverNetwork) {
   const int fd = ConnectToServer(server_->port());
 

@@ -40,15 +40,51 @@ Supported commands:
 - `TTL`
 - `PTTL`
 - `PERSIST`
+- `SET`
+- `GET`
+- `STRLEN`
 - `HSET`
 - `HGETALL`
 - `HDEL`
+- `LPUSH`
+- `LPOP`
+- `LRANGE`
+- `RPUSH`
+- `RPOP`
+- `LREM`
+- `LTRIM`
+- `LLEN`
+- `SADD`
+- `SCARD`
+- `SMEMBERS`
+- `SISMEMBER`
+- `SPOP`
+- `SRANDMEMBER`
+- `SREM`
+- `ZADD`
+- `ZCARD`
+- `ZCOUNT`
+- `ZINCRBY`
+- `ZLEXCOUNT`
+- `ZRANGE`
+- `ZRANGEBYLEX`
+- `ZRANGEBYSCORE`
+- `ZRANK`
+- `ZREM`
+- `ZSCORE`
 
 Those commands are registered by builtin modules during startup:
 
 - `CoreModule`: `PING`, `TYPE`, `EXISTS`, `DEL`, `EXPIRE`, `TTL`, `PTTL`,
   `PERSIST`
+- `StringModule`: `SET`, `GET`, `STRLEN`
 - `HashModule`: `HSET`, `HGETALL`, `HDEL`
+- `ListModule`: `LPUSH`, `LPOP`, `LRANGE`, `RPUSH`, `RPOP`, `LREM`, `LTRIM`,
+  `LLEN`
+- `SetModule`: `SADD`, `SCARD`, `SMEMBERS`, `SISMEMBER`, `SPOP`,
+  `SRANDMEMBER`, `SREM`
+- `ZSetModule`: `ZADD`, `ZCARD`, `ZCOUNT`, `ZINCRBY`, `ZLEXCOUNT`, `ZRANGE`,
+  `ZRANGEBYLEX`, `ZRANGEBYSCORE`, `ZRANK`, `ZREM`, `ZSCORE`
 
 `CreateCmd()` resolves names from the shared `CommandRegistry` owned by
 `ModuleManager`.
@@ -96,9 +132,14 @@ Current helpers can build:
 Current builtin commands use:
 
 - simple string: `PING`
-- bulk string: `TYPE`
-- integer: `EXISTS`, `DEL`, `EXPIRE`, `TTL`, `PTTL`, `PERSIST`, `HSET`, `HDEL`
-- flat bulk-string array: `HGETALL`
+- bulk string: `TYPE`, `GET`, `LPOP`, `RPOP`, `SRANDMEMBER`, `SPOP`,
+  `ZINCRBY`, `ZSCORE`
+- integer: `EXISTS`, `DEL`, `EXPIRE`, `TTL`, `PTTL`, `PERSIST`, `STRLEN`,
+  `HSET`, `HDEL`, `LLEN`, `LPUSH`, `RPUSH`, `LREM`, `SADD`, `SCARD`,
+  `SISMEMBER`, `SREM`, `ZADD`, `ZCARD`, `ZCOUNT`, `ZLEXCOUNT`, `ZRANK`,
+  `ZREM`
+- flat bulk-string array: `HGETALL`, `LRANGE`, `SMEMBERS`, `ZRANGE`,
+  `ZRANGEBYLEX`, `ZRANGEBYSCORE`
 
 ## Current Design Conclusion
 
