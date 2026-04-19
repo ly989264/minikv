@@ -75,7 +75,9 @@ set(MINIKV_INTERNAL_HEADERS
   src/types/list/list_module.h
   src/types/string/string_module.h
   src/types/set/set_module.h
+  src/types/geo/geo_module.h
   src/types/stream/stream_module.h
+  src/types/zset/zset_bridge.h
   src/types/zset/zset_module.h
   src/network/resp_parser.h
   src/execution/worker/key_lock_table.h
@@ -101,6 +103,7 @@ set(MINIKV_SOURCES
   src/types/list/list_module.cc
   src/types/string/string_module.cc
   src/types/set/set_module.cc
+  src/types/geo/geo_module.cc
   src/types/stream/stream_module.cc
   src/types/zset/zset_module.cc
   src/network/network_server.cc
@@ -153,6 +156,7 @@ if(BUILD_TESTING)
   minikv_add_test(minikv_string_module_test tests/type_test/string_module_test.cc)
   minikv_add_test(minikv_set_module_test tests/type_test/set_module_test.cc)
   minikv_add_test(minikv_stream_module_test tests/type_test/stream_module_test.cc)
+  minikv_add_test(minikv_geo_module_test tests/type_test/geo_module_test.cc)
   minikv_add_test(minikv_zset_module_test tests/type_test/zset_module_test.cc)
   minikv_add_test(minikv_network_test tests/network_test/server_test.cc)
   minikv_add_test(minikv_reply_encode_test
@@ -171,6 +175,8 @@ if(BUILD_TESTING)
     tests/module_test/background_executor_test.cc)
   minikv_add_test(minikv_hash_bridge_test
     tests/module_test/hash_bridge_test.cc)
+  minikv_add_test(minikv_zset_bridge_test
+    tests/module_test/zset_bridge_test.cc)
   minikv_add_test(minikv_hash_observer_test
     tests/type_test/hash_observer_test.cc)
 endif()

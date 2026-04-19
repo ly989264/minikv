@@ -11,6 +11,7 @@
 #include "types/list/list_module.h"
 #include "types/string/string_module.h"
 #include "types/set/set_module.h"
+#include "types/geo/geo_module.h"
 #include "types/stream/stream_module.h"
 #include "types/zset/zset_module.h"
 
@@ -160,6 +161,7 @@ TEST(ModuleManagerTest, BuiltinModulesLoadIntoUnifiedRegistry) {
   modules.push_back(std::make_unique<minikv::ListModule>());
   modules.push_back(std::make_unique<minikv::SetModule>());
   modules.push_back(std::make_unique<minikv::ZSetModule>());
+  modules.push_back(std::make_unique<minikv::GeoModule>());
   modules.push_back(std::make_unique<minikv::StreamModule>());
 
   minikv::Scheduler scheduler(2, 16);
@@ -222,6 +224,16 @@ TEST(ModuleManagerTest, BuiltinModulesLoadIntoUnifiedRegistry) {
   const minikv::CmdRegistration* zrem = manager.command_registry().Find("ZREM");
   const minikv::CmdRegistration* zscore =
       manager.command_registry().Find("ZSCORE");
+  const minikv::CmdRegistration* geoadd =
+      manager.command_registry().Find("GEOADD");
+  const minikv::CmdRegistration* geopos =
+      manager.command_registry().Find("GEOPOS");
+  const minikv::CmdRegistration* geohash =
+      manager.command_registry().Find("GEOHASH");
+  const minikv::CmdRegistration* geodist =
+      manager.command_registry().Find("GEODIST");
+  const minikv::CmdRegistration* geosearch =
+      manager.command_registry().Find("GEOSEARCH");
   const minikv::CmdRegistration* xadd = manager.command_registry().Find("XADD");
   const minikv::CmdRegistration* xtrim =
       manager.command_registry().Find("XTRIM");
@@ -270,6 +282,11 @@ TEST(ModuleManagerTest, BuiltinModulesLoadIntoUnifiedRegistry) {
   ASSERT_NE(zrank, nullptr);
   ASSERT_NE(zrem, nullptr);
   ASSERT_NE(zscore, nullptr);
+  ASSERT_NE(geoadd, nullptr);
+  ASSERT_NE(geopos, nullptr);
+  ASSERT_NE(geohash, nullptr);
+  ASSERT_NE(geodist, nullptr);
+  ASSERT_NE(geosearch, nullptr);
   ASSERT_NE(xadd, nullptr);
   ASSERT_NE(xtrim, nullptr);
   ASSERT_NE(xdel, nullptr);
@@ -313,6 +330,11 @@ TEST(ModuleManagerTest, BuiltinModulesLoadIntoUnifiedRegistry) {
   EXPECT_EQ(zrank->owner_module, "zset");
   EXPECT_EQ(zrem->owner_module, "zset");
   EXPECT_EQ(zscore->owner_module, "zset");
+  EXPECT_EQ(geoadd->owner_module, "geo");
+  EXPECT_EQ(geopos->owner_module, "geo");
+  EXPECT_EQ(geohash->owner_module, "geo");
+  EXPECT_EQ(geodist->owner_module, "geo");
+  EXPECT_EQ(geosearch->owner_module, "geo");
   EXPECT_EQ(xadd->owner_module, "stream");
   EXPECT_EQ(xtrim->owner_module, "stream");
   EXPECT_EQ(xdel->owner_module, "stream");

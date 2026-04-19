@@ -21,6 +21,7 @@ Current user-visible scope:
   `SADD`, `SCARD`, `SMEMBERS`, `SISMEMBER`, `SPOP`, `SRANDMEMBER`, `SREM`,
   `ZADD`, `ZCARD`, `ZCOUNT`, `ZINCRBY`, `ZLEXCOUNT`, `ZRANGE`,
   `ZRANGEBYLEX`, `ZRANGEBYSCORE`, `ZRANK`, `ZREM`, `ZSCORE`,
+  `GEOADD`, `GEOPOS`, `GEOHASH`, `GEODIST`, `GEOSEARCH`,
   `XADD`, `XTRIM`, `XDEL`, `XLEN`, `XRANGE`, `XREVRANGE`, `XREAD`
 - supported data types: string, hash, list, set, zset, stream
 - deployment shape: one POSIX process exposing a TCP server
@@ -55,7 +56,7 @@ Important behavior:
 - `MiniKV::Open()` opens RocksDB before publishing the runtime
 - builtin modules load through `ModuleManager`
 - current builtin load order is `CoreModule`, `StringModule`, `HashModule`,
-  `ListModule`, `SetModule`, `ZSetModule`, then `StreamModule`
+  `ListModule`, `SetModule`, `ZSetModule`, `GeoModule`, then `StreamModule`
 - current module support is builtin-only and source-level only
 - `MiniKV` exists to share runtime state with `NetworkServer`
 
@@ -83,6 +84,7 @@ Notable current exports:
 - `core.key_service`
 - `core.whole_key_delete_registry`
 - `hash.indexing_bridge`
+- `zset.bridge`
 
 ### `src/network/network_server.h` and `src/network/network_server.cc`
 
@@ -115,7 +117,7 @@ This layer:
 - returns a transport-facing `CommandResponse`
 
 Builtin modules register their command families during `OnLoad()`: core,
-string, hash, list, set, zset, and stream.
+string, hash, list, set, zset, geo, and stream.
 
 ### `src/execution/scheduler/*` and `src/execution/worker/*`
 
@@ -188,9 +190,24 @@ Sorted-set semantics layer.
 - registering `ZADD`, `ZCARD`, `ZCOUNT`, `ZINCRBY`, `ZLEXCOUNT`, `ZRANGE`,
   `ZRANGEBYLEX`, `ZRANGEBYSCORE`, `ZRANK`, `ZREM`, and `ZSCORE`
 - registering itself as the whole-key delete handler for zset values
+- publishing `zset.bridge` so other builtin modules can observe zset writes or
+  request geo-encoded zset inserts without reaching into zset-private storage
 - maintaining member-to-score data plus a score-ordered secondary index in
   module-private keyspaces
 - bumping metadata versions when recreating expired or tombstoned zsets
+
+### `src/types/geo/*`
+
+Geospatial semantics layer.
+
+`GeoModule` is responsible for:
+
+- registering `GEOADD`, `GEOPOS`, `GEOHASH`, `GEODIST`, and `GEOSEARCH`
+- maintaining geo-only sidecar state in geo-owned module keyspaces
+- reusing zset storage as the authoritative member/score source through the
+  exported `zset.bridge`
+- observing zset mutations so geo sidecar rows stay in sync with `ZADD`,
+  `ZINCRBY`, `ZREM`, `DEL`, and zero-or-negative `EXPIRE` on geo keys
 
 ### `src/types/stream/*`
 

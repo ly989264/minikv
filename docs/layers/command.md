@@ -72,6 +72,11 @@ Supported commands:
 - `ZRANK`
 - `ZREM`
 - `ZSCORE`
+- `GEOADD`
+- `GEOPOS`
+- `GEOHASH`
+- `GEODIST`
+- `GEOSEARCH`
 - `XADD`
 - `XTRIM`
 - `XDEL`
@@ -92,6 +97,7 @@ Those commands are registered by builtin modules during startup:
   `SRANDMEMBER`, `SREM`
 - `ZSetModule`: `ZADD`, `ZCARD`, `ZCOUNT`, `ZINCRBY`, `ZLEXCOUNT`, `ZRANGE`,
   `ZRANGEBYLEX`, `ZRANGEBYSCORE`, `ZRANK`, `ZREM`, `ZSCORE`
+- `GeoModule`: `GEOADD`, `GEOPOS`, `GEOHASH`, `GEODIST`, `GEOSEARCH`
 - `StreamModule`: `XADD`, `XTRIM`, `XDEL`, `XLEN`, `XRANGE`, `XREVRANGE`,
   `XREAD`
 
@@ -142,14 +148,15 @@ Current builtin commands use:
 
 - simple string: `PING`
 - bulk string: `TYPE`, `GET`, `LPOP`, `RPOP`, `SRANDMEMBER`, `SPOP`,
-  `ZINCRBY`, `ZSCORE`, `XADD`
+  `ZINCRBY`, `ZSCORE`, `GEODIST`, `XADD`
 - integer: `EXISTS`, `DEL`, `EXPIRE`, `TTL`, `PTTL`, `PERSIST`, `STRLEN`,
   `HSET`, `HDEL`, `LLEN`, `LPUSH`, `RPUSH`, `LREM`, `SADD`, `SCARD`,
   `SISMEMBER`, `SREM`, `ZADD`, `ZCARD`, `ZCOUNT`, `ZLEXCOUNT`, `ZRANK`,
-  `ZREM`, `XTRIM`, `XDEL`, `XLEN`
+  `ZREM`, `GEOADD`, `XTRIM`, `XDEL`, `XLEN`
 - flat bulk-string array: `HGETALL`, `LRANGE`, `SMEMBERS`, `ZRANGE`,
   `ZRANGEBYLEX`, `ZRANGEBYSCORE`
-- nested array: `XRANGE`, `XREVRANGE`, `XREAD`
+- nested array: `GEOPOS`, `GEOSEARCH` with `WITH*`, `XRANGE`, `XREVRANGE`,
+  `XREAD`
 - null: missing-value reads such as `GET`, `LPOP`, and `RPOP`, plus `XREAD`
   when every requested stream has no newer entries
 

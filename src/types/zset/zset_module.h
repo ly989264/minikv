@@ -6,6 +6,7 @@
 
 #include "core/whole_key_delete_handler.h"
 #include "runtime/module/module.h"
+#include "types/zset/zset_bridge.h"
 
 namespace minikv {
 
@@ -14,12 +15,9 @@ class ModuleServices;
 class ModuleSnapshot;
 class ModuleWriteBatch;
 
-struct ZSetEntry {
-  std::string member;
-  double score = 0;
-};
-
-class ZSetModule : public Module, public WholeKeyDeleteHandler {
+class ZSetModule : public Module,
+                   public ZSetBridge,
+                   public WholeKeyDeleteHandler {
  public:
   std::string_view Name() const override { return "zset"; }
   rocksdb::Status OnLoad(ModuleServices& services) override;
@@ -31,6 +29,13 @@ class ZSetModule : public Module, public WholeKeyDeleteHandler {
                                  ModuleWriteBatch* write_batch,
                                  const std::string& key,
                                  const KeyLookup& lookup) override;
+
+  rocksdb::Status AddMembersWithEncoding(const std::string& key,
+                                         const std::vector<ZSetEntry>& entries,
+                                         ObjectEncoding encoding,
+                                         uint64_t* added_count) override;
+  rocksdb::Status AddObserver(ZSetObserver* observer) override;
+  rocksdb::Status RemoveObserver(ZSetObserver* observer) override;
 
   rocksdb::Status AddMembers(const std::string& key,
                              const std::vector<ZSetEntry>& entries,
@@ -60,11 +65,15 @@ class ZSetModule : public Module, public WholeKeyDeleteHandler {
 
  private:
   rocksdb::Status EnsureReady() const;
+  rocksdb::Status NotifyObservers(const ZSetMutation& mutation,
+                                  ModuleSnapshot* snapshot,
+                                  ModuleWriteBatch* write_batch) const;
 
   ModuleServices* services_ = nullptr;
   const CoreKeyService* key_service_ = nullptr;
   WholeKeyDeleteRegistry* delete_registry_ = nullptr;
   bool started_ = false;
+  std::vector<ZSetObserver*> observers_;
 };
 
 }  // namespace minikv

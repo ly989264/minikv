@@ -43,6 +43,8 @@ The main responsibilities are:
   interface, whole-key delete handling, and command registrations
 - `src/types/list/`: list builtin module and list command handling
 - `src/types/set/`: set builtin module and set command handling
+- `src/types/geo/`: geo builtin module, zset bridge consumer, and geo sidecar
+  command handling
 - `src/types/zset/`: zset builtin module and sorted-set command handling
 - `src/types/stream/`: stream builtin module and stream command handling
 - `src/storage/engine/` and `src/storage/encoding/`: RocksDB integration,
@@ -58,6 +60,7 @@ Public behavior is intentionally narrow today:
   `SADD`, `SCARD`, `SMEMBERS`, `SISMEMBER`, `SPOP`, `SRANDMEMBER`, `SREM`,
   `ZADD`, `ZCARD`, `ZCOUNT`, `ZINCRBY`, `ZLEXCOUNT`, `ZRANGE`,
   `ZRANGEBYLEX`, `ZRANGEBYSCORE`, `ZRANK`, `ZREM`, `ZSCORE`,
+  `GEOADD`, `GEOPOS`, `GEOHASH`, `GEODIST`, `GEOSEARCH`,
   `XADD`, `XTRIM`, `XDEL`, `XLEN`, `XRANGE`, `XREVRANGE`, `XREAD`
 - supported data types: string, hash, list, set, zset, stream
 - supported deployment shape: single process, POSIX server path
@@ -89,8 +92,9 @@ semantics:
 9. Core commands use `CoreKeyService` for metadata lookup, TTL handling, and
    whole-key delete dispatch. Hash commands use `HashModule`, which reads
    through `ModuleSnapshot` and stages writes through `ModuleWriteBatch`.
-10. Before commit, `HashModule` synchronously notifies any registered
-    `HashObserver` instances through the exported `HashIndexingBridge`.
+10. Before commit, type modules may synchronously notify same-batch observers:
+    `HashModule` uses `HashIndexingBridge`, while `ZSetModule` exposes
+    `zset.bridge` for `GeoModule` sidecar updates.
 11. `StorageEngine` translates the committed write batch onto RocksDB column
     families.
 12. The completion callback pushes the `CommandResponse` back into the owning
@@ -109,7 +113,8 @@ Builtin module load order is fixed:
 4. `ListModule`
 5. `SetModule`
 6. `ZSetModule`
-7. `StreamModule`
+7. `GeoModule`
+8. `StreamModule`
 
 Current command ownership:
 
@@ -123,6 +128,7 @@ Current command ownership:
   `SRANDMEMBER`, `SREM`
 - `ZSetModule`: `ZADD`, `ZCARD`, `ZCOUNT`, `ZINCRBY`, `ZLEXCOUNT`, `ZRANGE`,
   `ZRANGEBYLEX`, `ZRANGEBYSCORE`, `ZRANK`, `ZREM`, `ZSCORE`
+- `GeoModule`: `GEOADD`, `GEOPOS`, `GEOHASH`, `GEODIST`, `GEOSEARCH`
 - `StreamModule`: `XADD`, `XTRIM`, `XDEL`, `XLEN`, `XRANGE`, `XREVRANGE`,
   `XREAD`
 

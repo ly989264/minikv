@@ -46,6 +46,7 @@ bool IsKnownObjectEncoding(uint8_t value) {
     case ObjectEncoding::kSetHashtable:
     case ObjectEncoding::kZSetSkiplist:
     case ObjectEncoding::kStreamRadixTree:
+    case ObjectEncoding::kZSetGeo:
       return true;
   }
   return false;

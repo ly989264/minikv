@@ -21,6 +21,11 @@ namespace minikv {
 
 namespace {
 
+enum class AddMembersMode {
+  kPreserveLiveEncoding,
+  kRequireRequestedEncoding,
+};
+
 struct NormalizedRange {
   size_t begin = 0;
   size_t end = 0;
@@ -517,21 +522,22 @@ rocksdb::Status RequireZSetEncoding(const KeyLookup& lookup) {
     return rocksdb::Status::OK();
   }
   if (lookup.metadata.type != ObjectType::kZSet ||
-      lookup.metadata.encoding != ObjectEncoding::kZSetSkiplist) {
+      (lookup.metadata.encoding != ObjectEncoding::kZSetSkiplist &&
+       lookup.metadata.encoding != ObjectEncoding::kZSetGeo)) {
     return rocksdb::Status::InvalidArgument("key type mismatch");
   }
   return rocksdb::Status::OK();
 }
 
 KeyMetadata BuildZSetMetadata(const CoreKeyService* key_service,
-                              const KeyLookup& lookup) {
+                              const KeyLookup& lookup,
+                              ObjectEncoding create_encoding) {
   if (lookup.exists) {
     return lookup.metadata;
   }
 
   KeyMetadata metadata =
-      key_service->MakeMetadata(ObjectType::kZSet,
-                                ObjectEncoding::kZSetSkiplist, lookup);
+      key_service->MakeMetadata(ObjectType::kZSet, create_encoding, lookup);
   metadata.size = 0;
   return metadata;
 }
@@ -1110,9 +1116,16 @@ class ZScoreCmd : public Cmd {
 }  // namespace
 
 rocksdb::Status ZSetModule::OnLoad(ModuleServices& services) {
+  observers_.clear();
   services_ = &services;
 
-  rocksdb::Status status = services.command_registry().Register(
+  rocksdb::Status status = services.exports().Publish<ZSetBridge>(
+      kZSetBridgeExportName, static_cast<ZSetBridge*>(this));
+  if (!status.ok()) {
+    return status;
+  }
+
+  status = services.command_registry().Register(
       {"ZADD", CmdFlags::kWrite | CmdFlags::kFast, CommandSource::kBuiltin, "",
        [this](const CmdRegistration& registration) {
          return std::make_unique<ZAddCmd>(registration, this);
@@ -1255,15 +1268,16 @@ rocksdb::Status ZSetModule::OnStart(ModuleServices& services) {
 }
 
 void ZSetModule::OnStop(ModuleServices& /*services*/) {
+  observers_.clear();
   started_ = false;
   delete_registry_ = nullptr;
   key_service_ = nullptr;
   services_ = nullptr;
 }
 
-rocksdb::Status ZSetModule::AddMembers(const std::string& key,
-                                       const std::vector<ZSetEntry>& entries,
-                                       uint64_t* added_count) {
+rocksdb::Status ZSetModule::AddMembersWithEncoding(
+    const std::string& key, const std::vector<ZSetEntry>& entries,
+    ObjectEncoding encoding, uint64_t* added_count) {
   if (added_count != nullptr) {
     *added_count = 0;
   }
@@ -1271,6 +1285,10 @@ rocksdb::Status ZSetModule::AddMembers(const std::string& key,
   rocksdb::Status ready_status = EnsureReady();
   if (!ready_status.ok()) {
     return ready_status;
+  }
+  if (encoding != ObjectEncoding::kZSetSkiplist &&
+      encoding != ObjectEncoding::kZSetGeo) {
+    return rocksdb::Status::InvalidArgument("invalid zset encoding");
   }
 
   const std::vector<ZSetEntry> unique_entries = CollapseEntriesByMember(entries);
@@ -1288,13 +1306,18 @@ rocksdb::Status ZSetModule::AddMembers(const std::string& key,
   if (!status.ok()) {
     return status;
   }
+  if (lookup.exists && lookup.metadata.encoding != encoding) {
+    return rocksdb::Status::InvalidArgument("key type mismatch");
+  }
 
   const ModuleKeyspace members_keyspace = services_->storage().Keyspace("members");
   const ModuleKeyspace score_index_keyspace =
       services_->storage().Keyspace("score_index");
-  KeyMetadata after = BuildZSetMetadata(key_service_, lookup);
+  KeyMetadata after = BuildZSetMetadata(key_service_, lookup, encoding);
   uint64_t added = 0;
   bool changed = false;
+  std::vector<ZSetEntry> changed_entries;
+  changed_entries.reserve(unique_entries.size());
 
   std::unique_ptr<ModuleWriteBatch> write_batch =
       services_->storage().CreateWriteBatch();
@@ -1337,6 +1360,7 @@ rocksdb::Status ZSetModule::AddMembers(const std::string& key,
       return status;
     }
     changed = true;
+    changed_entries.push_back(entry);
   }
 
   if (!changed) {
@@ -1344,6 +1368,157 @@ rocksdb::Status ZSetModule::AddMembers(const std::string& key,
   }
 
   status = key_service_->PutMetadata(write_batch.get(), key, after);
+  if (!status.ok()) {
+    return status;
+  }
+
+  ZSetMutation mutation;
+  mutation.type = ZSetMutation::Type::kUpsertMembers;
+  mutation.key = key;
+  mutation.upserted_entries = std::move(changed_entries);
+  mutation.before = lookup.metadata;
+  mutation.after = after;
+  mutation.existed_before = lookup.exists;
+  mutation.exists_after = true;
+  status = NotifyObservers(mutation, snapshot.get(), write_batch.get());
+  if (!status.ok()) {
+    return status;
+  }
+
+  status = write_batch->Commit();
+  if (added_count != nullptr) {
+    *added_count = status.ok() ? added : 0;
+  }
+  return status;
+}
+
+rocksdb::Status ZSetModule::AddObserver(ZSetObserver* observer) {
+  if (services_ == nullptr) {
+    return rocksdb::Status::InvalidArgument("zset bridge is unavailable");
+  }
+  if (observer == nullptr) {
+    return rocksdb::Status::InvalidArgument("zset observer is required");
+  }
+  if (std::find(observers_.begin(), observers_.end(), observer) !=
+      observers_.end()) {
+    return rocksdb::Status::InvalidArgument("zset observer already registered");
+  }
+  observers_.push_back(observer);
+  return rocksdb::Status::OK();
+}
+
+rocksdb::Status ZSetModule::RemoveObserver(ZSetObserver* observer) {
+  if (services_ == nullptr) {
+    return rocksdb::Status::InvalidArgument("zset bridge is unavailable");
+  }
+  auto it = std::find(observers_.begin(), observers_.end(), observer);
+  if (it == observers_.end()) {
+    return rocksdb::Status::InvalidArgument("zset observer is not registered");
+  }
+  observers_.erase(it);
+  return rocksdb::Status::OK();
+}
+
+rocksdb::Status ZSetModule::AddMembers(const std::string& key,
+                                       const std::vector<ZSetEntry>& entries,
+                                       uint64_t* added_count) {
+  if (added_count != nullptr) {
+    *added_count = 0;
+  }
+
+  rocksdb::Status ready_status = EnsureReady();
+  if (!ready_status.ok()) {
+    return ready_status;
+  }
+
+  const std::vector<ZSetEntry> unique_entries = CollapseEntriesByMember(entries);
+  if (unique_entries.empty()) {
+    return rocksdb::Status::OK();
+  }
+
+  std::unique_ptr<ModuleSnapshot> snapshot = services_->snapshot().Create();
+  KeyLookup lookup;
+  rocksdb::Status status = key_service_->Lookup(snapshot.get(), key, &lookup);
+  if (!status.ok()) {
+    return status;
+  }
+  status = RequireZSetEncoding(lookup);
+  if (!status.ok()) {
+    return status;
+  }
+
+  const ModuleKeyspace members_keyspace = services_->storage().Keyspace("members");
+  const ModuleKeyspace score_index_keyspace =
+      services_->storage().Keyspace("score_index");
+  KeyMetadata after =
+      BuildZSetMetadata(key_service_, lookup, ObjectEncoding::kZSetSkiplist);
+  uint64_t added = 0;
+  bool changed = false;
+  std::vector<ZSetEntry> changed_entries;
+  changed_entries.reserve(unique_entries.size());
+
+  std::unique_ptr<ModuleWriteBatch> write_batch =
+      services_->storage().CreateWriteBatch();
+  for (const auto& entry : unique_entries) {
+    double existing_score = 0;
+    bool found = false;
+    status = ReadMemberScore(snapshot.get(), members_keyspace, key, after.version,
+                             entry.member, &existing_score, &found);
+    if (!status.ok()) {
+      return status;
+    }
+
+    if (found) {
+      if (existing_score == entry.score) {
+        continue;
+      }
+      status = write_batch->Delete(
+          score_index_keyspace,
+          EncodeZSetScoreIndexKey(key, after.version, existing_score,
+                                  entry.member));
+      if (!status.ok()) {
+        return status;
+      }
+    } else {
+      ++added;
+      ++after.size;
+    }
+
+    status = write_batch->Put(members_keyspace,
+                              EncodeZSetMemberKey(key, after.version, entry.member),
+                              EncodeScoreValue(entry.score));
+    if (!status.ok()) {
+      return status;
+    }
+    status = write_batch->Put(score_index_keyspace,
+                              EncodeZSetScoreIndexKey(key, after.version,
+                                                      entry.score, entry.member),
+                              "");
+    if (!status.ok()) {
+      return status;
+    }
+    changed = true;
+    changed_entries.push_back(entry);
+  }
+
+  if (!changed) {
+    return rocksdb::Status::OK();
+  }
+
+  status = key_service_->PutMetadata(write_batch.get(), key, after);
+  if (!status.ok()) {
+    return status;
+  }
+
+  ZSetMutation mutation;
+  mutation.type = ZSetMutation::Type::kUpsertMembers;
+  mutation.key = key;
+  mutation.upserted_entries = std::move(changed_entries);
+  mutation.before = lookup.metadata;
+  mutation.after = after;
+  mutation.existed_before = lookup.exists;
+  mutation.exists_after = true;
+  status = NotifyObservers(mutation, snapshot.get(), write_batch.get());
   if (!status.ok()) {
     return status;
   }
@@ -1480,7 +1655,8 @@ rocksdb::Status ZSetModule::IncrementBy(const std::string& key, double increment
   const ModuleKeyspace members_keyspace = services_->storage().Keyspace("members");
   const ModuleKeyspace score_index_keyspace =
       services_->storage().Keyspace("score_index");
-  KeyMetadata after = BuildZSetMetadata(key_service_, lookup);
+  KeyMetadata after =
+      BuildZSetMetadata(key_service_, lookup, ObjectEncoding::kZSetSkiplist);
 
   double current_score = 0;
   bool found = false;
@@ -1525,6 +1701,19 @@ rocksdb::Status ZSetModule::IncrementBy(const std::string& key, double increment
     return status;
   }
   status = key_service_->PutMetadata(write_batch.get(), key, after);
+  if (!status.ok()) {
+    return status;
+  }
+
+  ZSetMutation mutation;
+  mutation.type = ZSetMutation::Type::kUpsertMembers;
+  mutation.key = key;
+  mutation.upserted_entries.push_back(ZSetEntry{member, updated_score});
+  mutation.before = lookup.metadata;
+  mutation.after = after;
+  mutation.existed_before = lookup.exists;
+  mutation.exists_after = true;
+  status = NotifyObservers(mutation, snapshot.get(), write_batch.get());
   if (!status.ok()) {
     return status;
   }
@@ -1948,6 +2137,19 @@ rocksdb::Status ZSetModule::RemoveMembers(
     return status;
   }
 
+  ZSetMutation mutation;
+  mutation.type = ZSetMutation::Type::kRemoveMembers;
+  mutation.key = key;
+  mutation.removed_members = unique_members;
+  mutation.before = lookup.metadata;
+  mutation.after = after;
+  mutation.existed_before = lookup.exists;
+  mutation.exists_after = after.expire_at_ms != kLogicalDeleteExpireAtMs;
+  status = NotifyObservers(mutation, snapshot.get(), write_batch.get());
+  if (!status.ok()) {
+    return status;
+  }
+
   status = write_batch->Commit();
   if (removed_count != nullptr) {
     *removed_count = status.ok() ? removed : 0;
@@ -2040,12 +2242,41 @@ rocksdb::Status ZSetModule::DeleteWholeKey(ModuleSnapshot* snapshot,
   }
 
   const KeyMetadata after = BuildZSetTombstoneMetadata(key_service_, lookup);
-  return key_service_->PutMetadata(write_batch, key, after);
+  status = key_service_->PutMetadata(write_batch, key, after);
+  if (!status.ok()) {
+    return status;
+  }
+
+  ZSetMutation mutation;
+  mutation.type = ZSetMutation::Type::kDeleteKey;
+  mutation.key = key;
+  mutation.before = lookup.metadata;
+  mutation.after = after;
+  mutation.existed_before = lookup.exists;
+  mutation.exists_after = false;
+  mutation.removed_members.reserve(members.size());
+  for (const auto& entry : members) {
+    mutation.removed_members.push_back(entry.member);
+  }
+  return NotifyObservers(mutation, snapshot, write_batch);
 }
 
 rocksdb::Status ZSetModule::EnsureReady() const {
   if (services_ == nullptr || key_service_ == nullptr || !started_) {
     return rocksdb::Status::InvalidArgument("zset module is unavailable");
+  }
+  return rocksdb::Status::OK();
+}
+
+rocksdb::Status ZSetModule::NotifyObservers(const ZSetMutation& mutation,
+                                            ModuleSnapshot* snapshot,
+                                            ModuleWriteBatch* write_batch) const {
+  for (ZSetObserver* observer : observers_) {
+    rocksdb::Status status =
+        observer->OnZSetMutation(mutation, snapshot, write_batch);
+    if (!status.ok()) {
+      return status;
+    }
   }
   return rocksdb::Status::OK();
 }

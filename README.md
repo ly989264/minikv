@@ -17,6 +17,7 @@ Current builtin modules:
   `SRANDMEMBER`, `SREM`
 - `ZSetModule`: `ZADD`, `ZCARD`, `ZCOUNT`, `ZINCRBY`, `ZLEXCOUNT`, `ZRANGE`,
   `ZRANGEBYLEX`, `ZRANGEBYSCORE`, `ZRANK`, `ZREM`, `ZSCORE`
+- `GeoModule`: `GEOADD`, `GEOPOS`, `GEOHASH`, `GEODIST`, `GEOSEARCH`
 - `StreamModule`: `XADD`, `XTRIM`, `XDEL`, `XLEN`, `XRANGE`, `XREVRANGE`,
   `XREAD`
 
@@ -91,6 +92,7 @@ from the metadata recorded in `third_party/rocksdb/linux-x86_64/BUNDLE_INFO.env`
 - `src/types/hash/`: hash commands, hash storage semantics, and observer bridge
 - `src/types/list/`: list commands and list storage semantics
 - `src/types/set/`: set commands and set storage semantics
+- `src/types/geo/`: geospatial commands and geo sidecar storage semantics
 - `src/types/zset/`: sorted-set commands and zset storage semantics
 - `src/types/stream/`: stream commands and stream storage semantics
 - `src/`: implementation sources. There is no `include/minikv/` public header

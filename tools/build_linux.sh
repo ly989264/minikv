@@ -177,8 +177,10 @@ if [[ "${SKIP_TESTS}" -eq 0 ]]; then
     minikv_string_module_test
     minikv_set_module_test
     minikv_stream_module_test
+    minikv_geo_module_test
     minikv_zset_module_test
     minikv_hash_bridge_test
+    minikv_zset_bridge_test
     minikv_hash_observer_test
     minikv_module_manager_test
     minikv_network_test

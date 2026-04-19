@@ -31,6 +31,7 @@ enum class ObjectEncoding : uint8_t {
   kSetHashtable = 4,
   kZSetSkiplist = 5,
   kStreamRadixTree = 6,
+  kZSetGeo = 7,
 };
 
 struct KeyMetadata {

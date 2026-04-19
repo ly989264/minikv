@@ -13,6 +13,7 @@
 #include "types/string/string_module.h"
 #include "types/set/set_module.h"
 #include "types/stream/stream_module.h"
+#include "types/geo/geo_module.h"
 #include "types/zset/zset_module.h"
 
 namespace minikv {
@@ -26,6 +27,7 @@ std::vector<std::unique_ptr<Module>> CreateBuiltinModules() {
   modules.push_back(std::make_unique<ListModule>());
   modules.push_back(std::make_unique<SetModule>());
   modules.push_back(std::make_unique<ZSetModule>());
+  modules.push_back(std::make_unique<GeoModule>());
   modules.push_back(std::make_unique<StreamModule>());
   return modules;
 }

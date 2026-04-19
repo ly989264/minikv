@@ -17,6 +17,7 @@
 #include "types/list/list_module.h"
 #include "types/string/string_module.h"
 #include "types/set/set_module.h"
+#include "types/geo/geo_module.h"
 #include "types/stream/stream_module.h"
 #include "types/zset/zset_module.h"
 #include "rocksdb/db.h"
@@ -70,6 +71,16 @@ void ExpectBulkString(const minikv::ReplyNode& reply,
                       const std::string& value) {
   ASSERT_TRUE(reply.IsBulkString());
   EXPECT_EQ(reply.string(), value);
+}
+
+void ExpectGeoCoordinateReply(const minikv::ReplyNode& reply, double longitude,
+                              double latitude, double tolerance = 1e-5) {
+  ASSERT_TRUE(reply.IsArray());
+  ASSERT_EQ(reply.array().size(), 2U);
+  ASSERT_TRUE(reply.array()[0].IsBulkString());
+  ASSERT_TRUE(reply.array()[1].IsBulkString());
+  EXPECT_NEAR(std::stod(reply.array()[0].string()), longitude, tolerance);
+  EXPECT_NEAR(std::stod(reply.array()[1].string()), latitude, tolerance);
 }
 
 void ExpectStreamFieldArray(
@@ -206,6 +217,9 @@ class ModuleRuntimeTest : public ::testing::Test {
     auto zset_module = std::make_unique<minikv::ZSetModule>();
     zset_module_ = zset_module.get();
     modules.push_back(std::move(zset_module));
+    auto geo_module = std::make_unique<minikv::GeoModule>();
+    geo_module_ = geo_module.get();
+    modules.push_back(std::move(geo_module));
     auto stream_module = std::make_unique<minikv::StreamModule>();
     stream_module_ = stream_module.get();
     modules.push_back(std::move(stream_module));
@@ -247,6 +261,7 @@ class ModuleRuntimeTest : public ::testing::Test {
   minikv::ListModule* list_module_ = nullptr;
   minikv::SetModule* set_module_ = nullptr;
   minikv::ZSetModule* zset_module_ = nullptr;
+  minikv::GeoModule* geo_module_ = nullptr;
   minikv::StreamModule* stream_module_ = nullptr;
 };
 
@@ -492,6 +507,36 @@ TEST_F(ModuleRuntimeTest, FindsRegisteredCommandsByName) {
   EXPECT_EQ(zscore->owner_module, "zset");
   ExpectFlags(zscore->flags, true, false, true, false);
 
+  const minikv::CmdRegistration* geoadd = registry().Find("GEOADD");
+  ASSERT_NE(geoadd, nullptr);
+  EXPECT_EQ(geoadd->name, "GEOADD");
+  EXPECT_EQ(geoadd->owner_module, "geo");
+  ExpectFlags(geoadd->flags, false, true, true, false);
+
+  const minikv::CmdRegistration* geopos = registry().Find("GEOPOS");
+  ASSERT_NE(geopos, nullptr);
+  EXPECT_EQ(geopos->name, "GEOPOS");
+  EXPECT_EQ(geopos->owner_module, "geo");
+  ExpectFlags(geopos->flags, true, false, true, false);
+
+  const minikv::CmdRegistration* geohash = registry().Find("GEOHASH");
+  ASSERT_NE(geohash, nullptr);
+  EXPECT_EQ(geohash->name, "GEOHASH");
+  EXPECT_EQ(geohash->owner_module, "geo");
+  ExpectFlags(geohash->flags, true, false, true, false);
+
+  const minikv::CmdRegistration* geodist = registry().Find("GEODIST");
+  ASSERT_NE(geodist, nullptr);
+  EXPECT_EQ(geodist->name, "GEODIST");
+  EXPECT_EQ(geodist->owner_module, "geo");
+  ExpectFlags(geodist->flags, true, false, true, false);
+
+  const minikv::CmdRegistration* geosearch = registry().Find("GEOSEARCH");
+  ASSERT_NE(geosearch, nullptr);
+  EXPECT_EQ(geosearch->name, "GEOSEARCH");
+  EXPECT_EQ(geosearch->owner_module, "geo");
+  ExpectFlags(geosearch->flags, true, false, false, true);
+
   const minikv::CmdRegistration* xadd = registry().Find("XADD");
   ASSERT_NE(xadd, nullptr);
   EXPECT_EQ(xadd->name, "XADD");
@@ -688,6 +733,32 @@ TEST_F(ModuleRuntimeTest, CreatesCommandsFromRespParts) {
           .ok());
   ASSERT_NE(lower_zset, nullptr);
   EXPECT_EQ(lower_zset->Name(), "ZSCORE");
+
+  std::unique_ptr<minikv::Cmd> geoadd;
+  ASSERT_TRUE(minikv::CreateCmd(
+                  registry(),
+                  {"GEOADD", "geo:1", "0", "0", "center", "1", "1", "edge"},
+                  &geoadd)
+                  .ok());
+  ASSERT_NE(geoadd, nullptr);
+  EXPECT_EQ(geoadd->Name(), "GEOADD");
+  EXPECT_EQ(geoadd->RouteKey(), "geo:1");
+  ExpectLockPlan(geoadd->lock_plan(), minikv::Cmd::LockPlan::Kind::kSingle,
+                 "geo:1", {});
+  ExpectFlags(geoadd->Flags(), false, true, true, false);
+
+  std::unique_ptr<minikv::Cmd> geosearch;
+  ASSERT_TRUE(minikv::CreateCmd(registry(),
+                                {"GEOSEARCH", "geo:1", "FROMMEMBER", "center",
+                                 "BYRADIUS", "5", "km"},
+                                &geosearch)
+                  .ok());
+  ASSERT_NE(geosearch, nullptr);
+  EXPECT_EQ(geosearch->Name(), "GEOSEARCH");
+  EXPECT_EQ(geosearch->RouteKey(), "geo:1");
+  ExpectLockPlan(geosearch->lock_plan(), minikv::Cmd::LockPlan::Kind::kSingle,
+                 "geo:1", {});
+  ExpectFlags(geosearch->Flags(), true, false, false, true);
 
   std::unique_ptr<minikv::Cmd> xadd;
   ASSERT_TRUE(minikv::CreateCmd(
@@ -961,6 +1032,48 @@ TEST_F(ModuleRuntimeTest, RejectsBadArgumentsAndNullOutputs) {
   ASSERT_TRUE(status.IsInvalidArgument());
   EXPECT_NE(status.ToString().find("ZSCORE requires member"),
             std::string::npos);
+
+  status = minikv::CreateCmd(registry(), {"GEOADD", "geo:1"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("triplets"), std::string::npos);
+
+  status =
+      minikv::CreateCmd(registry(), {"GEOADD", "geo:1", "200", "0", "x"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("valid longitude/latitude"),
+            std::string::npos);
+
+  status = minikv::CreateCmd(registry(), {"GEOPOS", "geo:1"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("GEOPOS requires at least one member"),
+            std::string::npos);
+
+  status = minikv::CreateCmd(registry(), {"GEOHASH", "geo:1"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("GEOHASH requires at least one member"),
+            std::string::npos);
+
+  status = minikv::CreateCmd(registry(), {"GEODIST", "geo:1", "a"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("GEODIST requires two members"),
+            std::string::npos);
+
+  status =
+      minikv::CreateCmd(registry(), {"GEODIST", "geo:1", "a", "b", "bad"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("unsupported unit"), std::string::npos);
+
+  status = minikv::CreateCmd(registry(), {"GEOSEARCH", "geo:1"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("center"), std::string::npos);
+
+  status = minikv::CreateCmd(
+      registry(),
+      {"GEOSEARCH", "geo:1", "FROMMEMBER", "a", "BYRADIUS", "1", "km", "COUNT",
+       "1", "ANY"},
+      &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("unsupported"), std::string::npos);
 
   status = minikv::CreateCmd(registry(), {"XADD", "stream:1"}, &cmd);
   ASSERT_TRUE(status.IsInvalidArgument());
@@ -1517,6 +1630,67 @@ TEST_F(ModuleRuntimeTest, ZSetCommandsExecuteAgainstEngine) {
   bool found = false;
   ASSERT_TRUE(zset_module_->Score("zset:cmd", "b", &score, &found).ok());
   EXPECT_FALSE(found);
+}
+
+TEST_F(ModuleRuntimeTest, GeoCommandsExecuteAgainstEngine) {
+  minikv::CommandResponse response =
+      CreateFromParts({"GEOADD", "geo:cmd", "0", "0", "center", "0.1", "0",
+                       "near", "2", "0", "far"})
+          ->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsInteger());
+  EXPECT_EQ(response.reply.integer(), 3);
+
+  response = CreateFromParts({"GEOPOS", "geo:cmd", "center", "missing"})
+                 ->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsArray());
+  ASSERT_EQ(response.reply.array().size(), 2U);
+  ExpectGeoCoordinateReply(response.reply.array()[0], 0.0, 0.0);
+  EXPECT_TRUE(response.reply.array()[1].IsNull());
+
+  response = CreateFromParts({"GEOHASH", "geo:cmd", "center", "missing"})
+                 ->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsArray());
+  ASSERT_EQ(response.reply.array().size(), 2U);
+  ASSERT_TRUE(response.reply.array()[0].IsBulkString());
+  EXPECT_EQ(response.reply.array()[0].string().size(), 11U);
+  EXPECT_TRUE(response.reply.array()[1].IsNull());
+
+  response =
+      CreateFromParts({"GEODIST", "geo:cmd", "center", "near", "km"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsBulkString());
+  EXPECT_NEAR(std::stod(response.reply.string()), 11.1, 0.5);
+
+  response = CreateFromParts({"GEOSEARCH", "geo:cmd", "FROMMEMBER", "center",
+                              "BYRADIUS", "50", "km", "ASC", "COUNT", "2",
+                              "WITHDIST", "WITHHASH", "WITHCOORD"})
+                 ->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsArray());
+  ASSERT_EQ(response.reply.array().size(), 2U);
+
+  const auto& first = response.reply.array()[0];
+  ASSERT_TRUE(first.IsArray());
+  ASSERT_EQ(first.array().size(), 4U);
+  ASSERT_TRUE(first.array()[0].IsBulkString());
+  EXPECT_EQ(first.array()[0].string(), "center");
+  ASSERT_TRUE(first.array()[1].IsBulkString());
+  EXPECT_EQ(std::stod(first.array()[1].string()), 0.0);
+  ASSERT_TRUE(first.array()[2].IsInteger());
+  ExpectGeoCoordinateReply(first.array()[3], 0.0, 0.0);
+
+  const auto& second = response.reply.array()[1];
+  ASSERT_TRUE(second.IsArray());
+  ASSERT_EQ(second.array().size(), 4U);
+  ASSERT_TRUE(second.array()[0].IsBulkString());
+  EXPECT_EQ(second.array()[0].string(), "near");
+  ASSERT_TRUE(second.array()[1].IsBulkString());
+  EXPECT_NEAR(std::stod(second.array()[1].string()), 11.1, 0.5);
+  ASSERT_TRUE(second.array()[2].IsInteger());
+  ExpectGeoCoordinateReply(second.array()[3], 0.1, 0.0);
 }
 
 TEST_F(ModuleRuntimeTest, StreamCommandsExecuteAgainstEngine) {

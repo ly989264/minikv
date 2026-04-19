@@ -83,6 +83,16 @@ void ExpectStreamFieldArray(const RespValue& value,
   }
 }
 
+void ExpectGeoCoordinateValue(const RespValue& value, double longitude,
+                              double latitude, double tolerance = 1e-5) {
+  ASSERT_EQ(value.type, RespValue::Type::kArray);
+  ASSERT_EQ(value.array.size(), 2U);
+  ASSERT_EQ(value.array[0].type, RespValue::Type::kBulkString);
+  ASSERT_EQ(value.array[1].type, RespValue::Type::kBulkString);
+  EXPECT_NEAR(std::stod(value.array[0].text), longitude, tolerance);
+  EXPECT_NEAR(std::stod(value.array[1].text), latitude, tolerance);
+}
+
 void ExpectStreamEntry(const RespValue& value, const std::string& id,
                        const std::vector<std::string>& fields) {
   ASSERT_EQ(value.type, RespValue::Type::kArray);
@@ -578,6 +588,92 @@ TEST_F(MiniKVServerTest, ZSetCommandsWorkOverNetwork) {
   WriteAll(fd, EncodeCommand({"ZRANK", "zset:1", "b"}));
   reply = ReadRespValue(fd);
   ASSERT_EQ(reply.type, RespValue::Type::kNull);
+
+  close(fd);
+}
+
+TEST_F(MiniKVServerTest, GeoCommandsWorkOverNetwork) {
+  const int fd = ConnectToServer(server_->port());
+
+  WriteAll(fd, EncodeCommand({"GEOADD", "geo:1", "0", "0", "center", "0.1",
+                              "0", "near", "2", "0", "far"}));
+  RespValue reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kInteger);
+  ASSERT_EQ(reply.integer, 3);
+
+  WriteAll(fd, EncodeCommand({"TYPE", "geo:1"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kBulkString);
+  ASSERT_EQ(reply.text, "zset");
+
+  WriteAll(fd, EncodeCommand({"ZRANGE", "geo:1", "0", "-1"}));
+  reply = ReadRespValue(fd);
+  ExpectArrayTextsUnordered(reply, {"center", "near", "far"});
+
+  WriteAll(fd, EncodeCommand({"GEOPOS", "geo:1", "center", "missing"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kArray);
+  ASSERT_EQ(reply.array.size(), 2U);
+  ExpectGeoCoordinateValue(reply.array[0], 0.0, 0.0);
+  ASSERT_EQ(reply.array[1].type, RespValue::Type::kNull);
+
+  WriteAll(fd, EncodeCommand({"GEOSEARCH", "geo:1", "FROMMEMBER", "center",
+                              "BYRADIUS", "50", "km", "ASC", "COUNT", "2",
+                              "WITHDIST", "WITHHASH", "WITHCOORD"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kArray);
+  ASSERT_EQ(reply.array.size(), 2U);
+
+  ASSERT_EQ(reply.array[0].type, RespValue::Type::kArray);
+  ASSERT_EQ(reply.array[0].array.size(), 4U);
+  ASSERT_EQ(reply.array[0].array[0].type, RespValue::Type::kBulkString);
+  EXPECT_EQ(reply.array[0].array[0].text, "center");
+  ASSERT_EQ(reply.array[0].array[1].type, RespValue::Type::kBulkString);
+  EXPECT_EQ(std::stod(reply.array[0].array[1].text), 0.0);
+  ASSERT_EQ(reply.array[0].array[2].type, RespValue::Type::kInteger);
+  ExpectGeoCoordinateValue(reply.array[0].array[3], 0.0, 0.0);
+
+  ASSERT_EQ(reply.array[1].type, RespValue::Type::kArray);
+  ASSERT_EQ(reply.array[1].array.size(), 4U);
+  ASSERT_EQ(reply.array[1].array[0].type, RespValue::Type::kBulkString);
+  EXPECT_EQ(reply.array[1].array[0].text, "near");
+  ASSERT_EQ(reply.array[1].array[1].type, RespValue::Type::kBulkString);
+  EXPECT_NEAR(std::stod(reply.array[1].array[1].text), 11.1, 0.5);
+  ASSERT_EQ(reply.array[1].array[2].type, RespValue::Type::kInteger);
+  ExpectGeoCoordinateValue(reply.array[1].array[3], 0.1, 0.0);
+
+  WriteAll(fd, EncodeCommand({"ZADD", "geo:1", "12345", "center"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kInteger);
+  ASSERT_EQ(reply.integer, 0);
+
+  WriteAll(fd, EncodeCommand({"GEOPOS", "geo:1", "center"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kArray);
+  ASSERT_EQ(reply.array.size(), 1U);
+  ASSERT_EQ(reply.array[0].type, RespValue::Type::kArray);
+  EXPECT_NE(std::stod(reply.array[0].array[0].text), 0.0);
+
+  WriteAll(fd, EncodeCommand({"ZREM", "geo:1", "near"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kInteger);
+  ASSERT_EQ(reply.integer, 1);
+
+  WriteAll(fd, EncodeCommand({"GEOPOS", "geo:1", "near"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kArray);
+  ASSERT_EQ(reply.array.size(), 1U);
+  ASSERT_EQ(reply.array[0].type, RespValue::Type::kNull);
+
+  WriteAll(fd, EncodeCommand({"ZADD", "zset:plain", "1", "a"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kInteger);
+  ASSERT_EQ(reply.integer, 1);
+
+  WriteAll(fd, EncodeCommand({"GEOADD", "zset:plain", "0", "0", "x"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kError);
+  EXPECT_NE(reply.text.find("key type mismatch"), std::string::npos);
 
   close(fd);
 }
