@@ -165,13 +165,13 @@ class ZSetModuleTest : public ::testing::Test {
     const minikv::ModuleKeyspace members_keyspace("zset", "members");
     const minikv::ModuleKeyspace score_index_keyspace("zset", "score_index");
     ASSERT_TRUE(write_context
-                    .Put(minikv::StorageColumnFamily::kModule,
+                    .Put(minikv::StorageColumnFamily::kZSet,
                          members_keyspace.EncodeKey(
                              EncodeZSetMemberLocalKey(key, version, member)),
                          EncodeScoreValue(score))
                     .ok());
     ASSERT_TRUE(write_context
-                    .Put(minikv::StorageColumnFamily::kModule,
+                    .Put(minikv::StorageColumnFamily::kZSet,
                          score_index_keyspace.EncodeKey(EncodeZSetScoreIndexLocalKey(
                              key, version, score, member)),
                          "")
@@ -183,7 +183,8 @@ class ZSetModuleTest : public ::testing::Test {
                       const std::string& local_key) const {
     std::string value;
     return storage_engine_
-        ->Get(minikv::StorageColumnFamily::kModule, keyspace.EncodeKey(local_key),
+        ->Get(minikv::StorageColumnFamily::kZSet,
+              keyspace.EncodeKey(local_key),
               &value)
         .ok();
   }

@@ -2,6 +2,7 @@
 
 #include <memory>
 #include <utility>
+#include <vector>
 
 #include "storage/engine/snapshot.h"
 #include "rocksdb/slice.h"
@@ -13,8 +14,24 @@ namespace minikv {
 namespace {
 
 constexpr char kMetaCF[] = "meta";
+constexpr char kStringCF[] = "string";
 constexpr char kHashCF[] = "hash";
+constexpr char kListCF[] = "list";
+constexpr char kSetCF[] = "set";
+constexpr char kZSetCF[] = "zset";
+constexpr char kStreamCF[] = "stream";
+constexpr char kJsonCF[] = "json";
+constexpr char kTimeseriesCF[] = "timeseries";
+constexpr char kVectorSetCF[] = "vectorset";
 constexpr char kModuleCF[] = "module";
+
+std::vector<std::string> RequiredColumnFamilyNames() {
+  return {
+      rocksdb::kDefaultColumnFamilyName, kMetaCF,       kStringCF,   kHashCF,
+      kListCF,                     kSetCF,       kZSetCF,    kStreamCF,
+      kJsonCF,                     kTimeseriesCF, kVectorSetCF, kModuleCF,
+  };
+}
 
 rocksdb::Options BaseOptions() {
   rocksdb::Options options;
@@ -59,8 +76,24 @@ rocksdb::ColumnFamilyHandle* StorageEngine::Handle(
       return default_cf_;
     case StorageColumnFamily::kMeta:
       return meta_cf_;
+    case StorageColumnFamily::kString:
+      return string_cf_;
     case StorageColumnFamily::kHash:
       return hash_cf_;
+    case StorageColumnFamily::kList:
+      return list_cf_;
+    case StorageColumnFamily::kSet:
+      return set_cf_;
+    case StorageColumnFamily::kZSet:
+      return zset_cf_;
+    case StorageColumnFamily::kStream:
+      return stream_cf_;
+    case StorageColumnFamily::kJson:
+      return json_cf_;
+    case StorageColumnFamily::kTimeseries:
+      return timeseries_cf_;
+    case StorageColumnFamily::kVectorSet:
+      return vectorset_cf_;
     case StorageColumnFamily::kModule:
       return module_cf_;
   }
@@ -73,6 +106,7 @@ rocksdb::Status StorageEngine::Open(const Config& config) {
 
 rocksdb::Status StorageEngine::OpenWithColumnFamilies(const Config& config) {
   rocksdb::Options options = BaseOptions();
+  const std::vector<std::string> required_cf_names = RequiredColumnFamilyNames();
   std::vector<std::string> cf_names;
   rocksdb::Status status =
       rocksdb::DB::ListColumnFamilies(options, config.db_path, &cf_names);
@@ -81,25 +115,19 @@ rocksdb::Status StorageEngine::OpenWithColumnFamilies(const Config& config) {
   }
 
   if (!status.ok()) {
-    cf_names = {rocksdb::kDefaultColumnFamilyName, kMetaCF, kHashCF,
-                kModuleCF};
+    cf_names = required_cf_names;
   } else {
-    bool has_meta = false;
-    bool has_hash = false;
-    bool has_module = false;
-    for (const auto& name : cf_names) {
-      has_meta = has_meta || name == kMetaCF;
-      has_hash = has_hash || name == kHashCF;
-      has_module = has_module || name == kModuleCF;
-    }
-    if (!has_meta) {
-      cf_names.push_back(kMetaCF);
-    }
-    if (!has_hash) {
-      cf_names.push_back(kHashCF);
-    }
-    if (!has_module) {
-      cf_names.push_back(kModuleCF);
+    for (const auto& required_name : required_cf_names) {
+      bool has_name = false;
+      for (const auto& existing_name : cf_names) {
+        if (existing_name == required_name) {
+          has_name = true;
+          break;
+        }
+      }
+      if (!has_name) {
+        cf_names.push_back(required_name);
+      }
     }
   }
 
@@ -128,9 +156,21 @@ rocksdb::Status StorageEngine::OpenWithColumnFamilies(const Config& config) {
   handles_ = std::move(handles);
   default_cf_ = FindHandle(rocksdb::kDefaultColumnFamilyName);
   meta_cf_ = FindHandle(kMetaCF);
+  string_cf_ = FindHandle(kStringCF);
   hash_cf_ = FindHandle(kHashCF);
+  list_cf_ = FindHandle(kListCF);
+  set_cf_ = FindHandle(kSetCF);
+  zset_cf_ = FindHandle(kZSetCF);
+  stream_cf_ = FindHandle(kStreamCF);
+  json_cf_ = FindHandle(kJsonCF);
+  timeseries_cf_ = FindHandle(kTimeseriesCF);
+  vectorset_cf_ = FindHandle(kVectorSetCF);
   module_cf_ = FindHandle(kModuleCF);
-  if (meta_cf_ == nullptr || hash_cf_ == nullptr || module_cf_ == nullptr) {
+  if (default_cf_ == nullptr || meta_cf_ == nullptr || string_cf_ == nullptr ||
+      hash_cf_ == nullptr || list_cf_ == nullptr || set_cf_ == nullptr ||
+      zset_cf_ == nullptr || stream_cf_ == nullptr || json_cf_ == nullptr ||
+      timeseries_cf_ == nullptr || vectorset_cf_ == nullptr ||
+      module_cf_ == nullptr) {
     return rocksdb::Status::Corruption("required column families missing");
   }
   return rocksdb::Status::OK();

@@ -98,7 +98,7 @@ class StringModuleTest : public ::testing::Test {
     minikv::WriteContext write_context(storage_engine_.get());
     const minikv::ModuleKeyspace data_keyspace("string", "data");
     ASSERT_TRUE(write_context
-                    .Put(minikv::StorageColumnFamily::kModule,
+                    .Put(minikv::StorageColumnFamily::kString,
                          data_keyspace.EncodeKey(key), value)
                     .ok());
     ASSERT_TRUE(write_context.Commit().ok());
@@ -108,7 +108,7 @@ class StringModuleTest : public ::testing::Test {
     std::string scratch;
     const minikv::ModuleKeyspace data_keyspace("string", "data");
     const rocksdb::Status status = storage_engine_->Get(
-        minikv::StorageColumnFamily::kModule, data_keyspace.EncodeKey(key),
+        minikv::StorageColumnFamily::kString, data_keyspace.EncodeKey(key),
         &scratch);
     return status.ok();
   }

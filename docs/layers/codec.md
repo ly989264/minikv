@@ -23,7 +23,8 @@ Important boundary:
 - `KeyCodec` owns key encodings
 - `DefaultCoreKeyService` in `src/core/key_service.cc` owns metadata value
   encoding and decoding
-- `ModuleKeyspace` encoding for the shared `module` column family lives in
+- `ModuleKeyspace` encoding for type-specific and auxiliary module keyspaces
+  lives in
   `src/runtime/module/module_services.cc`
 
 ## Current Layout
@@ -52,7 +53,7 @@ Current lifecycle semantics tied to metadata:
 - expired and tombstoned keys are hidden from user-visible lookups
 - recreating an expired or tombstoned hash bumps its version
 
-Module keyspace layout in the shared `module` column family is:
+Module keyspace layout used inside `ModuleKeyspace`-owned column families is:
 
 - `uint32(module_name_length) + module_name +
    uint32(local_name_length) + local_name + local_key`

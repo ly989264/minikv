@@ -13,6 +13,9 @@ class StringBridge;
 class BitmapModule : public Module {
  public:
   std::string_view Name() const override { return "bitmap"; }
+  StorageColumnFamily DefaultStorageColumnFamily() const override {
+    return StorageColumnFamily::kString;
+  }
   rocksdb::Status OnLoad(ModuleServices& services) override;
   rocksdb::Status OnStart(ModuleServices& services) override;
   void OnStop(ModuleServices& services) override;

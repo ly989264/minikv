@@ -22,6 +22,28 @@
 
 namespace {
 
+void AppendUint32(std::string* out, uint32_t value) {
+  for (int shift = 24; shift >= 0; shift -= 8) {
+    out->push_back(static_cast<char>((value >> shift) & 0xff));
+  }
+}
+
+void AppendUint64(std::string* out, uint64_t value) {
+  for (int shift = 56; shift >= 0; shift -= 8) {
+    out->push_back(static_cast<char>((value >> shift) & 0xff));
+  }
+}
+
+std::string EncodeGeoMemberLocalKey(const std::string& key, uint64_t version,
+                                    const std::string& member) {
+  std::string out;
+  AppendUint32(&out, static_cast<uint32_t>(key.size()));
+  out.append(key);
+  AppendUint64(&out, version);
+  out.append(member);
+  return out;
+}
+
 class GeoModuleTest : public ::testing::Test {
  protected:
   void SetUp() override {
@@ -109,6 +131,18 @@ class GeoModuleTest : public ::testing::Test {
     minikv::KeyLookup lookup;
     EXPECT_TRUE(key_service.Lookup(snapshot.get(), key, &lookup).ok());
     return lookup;
+  }
+
+  bool HasRawGeoPoint(const std::string& key, uint64_t version,
+                      const std::string& member) const {
+    std::string raw_value;
+    const minikv::ModuleKeyspace geo_keyspace("geo", "members");
+    return storage_engine_
+        ->Get(minikv::StorageColumnFamily::kZSet,
+              geo_keyspace.EncodeKey(
+                  EncodeGeoMemberLocalKey(key, version, member)),
+              &raw_value)
+        .ok();
   }
 
   static inline int counter_ = 0;
@@ -206,6 +240,9 @@ TEST_F(GeoModuleTest, ZSetMutationsKeepGeoSidecarInSync) {
                   ->AddLocations("geo:sync", {{"a", 0.0, 0.0}, {"b", 1.0, 1.0}},
                                  nullptr)
                   .ok());
+  const minikv::KeyMetadata initial = ReadRawMetadata("geo:sync");
+  EXPECT_TRUE(HasRawGeoPoint("geo:sync", initial.version, "a"));
+  EXPECT_TRUE(HasRawGeoPoint("geo:sync", initial.version, "b"));
 
   minikv::GeoCoordinates before_a;
   minikv::GeoCoordinates before_b;
@@ -240,6 +277,7 @@ TEST_F(GeoModuleTest, ZSetMutationsKeepGeoSidecarInSync) {
   ASSERT_TRUE(response.status.ok());
   ASSERT_TRUE(response.reply.IsInteger());
   EXPECT_EQ(response.reply.integer(), 1);
+  EXPECT_FALSE(HasRawGeoPoint("geo:sync", initial.version, "a"));
 
   ASSERT_TRUE(geo_module_->Position("geo:sync", "a", &after_a, &found).ok());
   EXPECT_FALSE(found);

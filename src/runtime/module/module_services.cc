@@ -55,6 +55,16 @@ std::string ModuleNamespace::Qualify(const std::string& local_name) const {
 
 ModuleKeyspace::ModuleKeyspace() = default;
 
+ModuleKeyspace::ModuleKeyspace(StorageColumnFamily column_family,
+                               std::string module_name, std::string local_name)
+    : column_family_(column_family),
+      module_name_(std::move(module_name)),
+      local_name_(std::move(local_name)) {
+  if (valid()) {
+    encoded_prefix_ = EncodeModuleKeyspacePrefix(module_name_, local_name_);
+  }
+}
+
 ModuleKeyspace::ModuleKeyspace(std::string module_name, std::string local_name)
     : module_name_(std::move(module_name)), local_name_(std::move(local_name)) {
   if (valid()) {
@@ -126,7 +136,7 @@ rocksdb::Status ModuleWriteBatch::Put(const ModuleKeyspace& keyspace,
   if (!keyspace.valid()) {
     return InvalidKeyspaceStatus();
   }
-  return Put(StorageColumnFamily::kModule, keyspace.EncodeKey(key), value);
+  return Put(keyspace.column_family(), keyspace.EncodeKey(key), value);
 }
 
 rocksdb::Status ModuleWriteBatch::Delete(StorageColumnFamily column_family,
@@ -142,7 +152,7 @@ rocksdb::Status ModuleWriteBatch::Delete(const ModuleKeyspace& keyspace,
   if (!keyspace.valid()) {
     return InvalidKeyspaceStatus();
   }
-  return Delete(StorageColumnFamily::kModule, keyspace.EncodeKey(key));
+  return Delete(keyspace.column_family(), keyspace.EncodeKey(key));
 }
 
 rocksdb::Status ModuleWriteBatch::Commit() {
@@ -268,7 +278,7 @@ rocksdb::Status ModuleSnapshot::Get(const ModuleKeyspace& keyspace,
   if (!keyspace.valid()) {
     return InvalidKeyspaceStatus();
   }
-  return Get(StorageColumnFamily::kModule, keyspace.EncodeKey(key), value);
+  return Get(keyspace.column_family(), keyspace.EncodeKey(key), value);
 }
 
 rocksdb::Status ModuleSnapshot::ScanPrefix(StorageColumnFamily column_family,
@@ -309,7 +319,7 @@ std::unique_ptr<ModuleIterator> ModuleSnapshot::NewIterator(
   }
   return std::unique_ptr<ModuleIterator>(new ModuleIterator(
       std::make_unique<ModuleIterator::Impl>(
-          impl_->snapshot->NewIterator(StorageColumnFamily::kModule), keyspace,
+          impl_->snapshot->NewIterator(keyspace.column_family()), keyspace,
           rocksdb::Status::OK())));
 }
 
@@ -435,12 +445,15 @@ void ModuleExportRegistry::ClearOwnedExports() {
 }
 
 ModuleStorage::ModuleStorage(ModuleNamespace module_namespace,
-                             StorageEngine* storage_engine)
+                             StorageEngine* storage_engine,
+                             StorageColumnFamily default_column_family)
     : module_namespace_(std::move(module_namespace)),
-      storage_engine_(storage_engine) {}
+      storage_engine_(storage_engine),
+      default_column_family_(default_column_family) {}
 
 ModuleKeyspace ModuleStorage::Keyspace(const std::string& local_name) const {
-  return ModuleKeyspace(module_namespace_.module_name(), local_name);
+  return ModuleKeyspace(default_column_family_, module_namespace_.module_name(),
+                        local_name);
 }
 
 std::unique_ptr<ModuleWriteBatch> ModuleStorage::CreateWriteBatch() const {
@@ -454,13 +467,16 @@ std::unique_ptr<ModuleWriteBatch> ModuleStorage::CreateWriteBatch() const {
 }
 
 ModuleSnapshotService::ModuleSnapshotService(
-    ModuleNamespace module_namespace, const StorageEngine* storage_engine)
+    ModuleNamespace module_namespace, const StorageEngine* storage_engine,
+    StorageColumnFamily default_column_family)
     : module_namespace_(std::move(module_namespace)),
-      storage_engine_(storage_engine) {}
+      storage_engine_(storage_engine),
+      default_column_family_(default_column_family) {}
 
 ModuleKeyspace ModuleSnapshotService::Keyspace(
     const std::string& local_name) const {
-  return ModuleKeyspace(module_namespace_.module_name(), local_name);
+  return ModuleKeyspace(default_column_family_, module_namespace_.module_name(),
+                        local_name);
 }
 
 std::unique_ptr<ModuleSnapshot> ModuleSnapshotService::Create() const {

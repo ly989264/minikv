@@ -97,7 +97,7 @@ class BitmapModuleTest : public ::testing::Test {
     minikv::WriteContext write_context(storage_engine_.get());
     const minikv::ModuleKeyspace data_keyspace("string", "data");
     ASSERT_TRUE(write_context
-                    .Put(minikv::StorageColumnFamily::kModule,
+                    .Put(minikv::StorageColumnFamily::kString,
                          data_keyspace.EncodeKey(key), value)
                     .ok());
     ASSERT_TRUE(write_context.Commit().ok());
@@ -107,7 +107,7 @@ class BitmapModuleTest : public ::testing::Test {
     std::string scratch;
     const minikv::ModuleKeyspace data_keyspace("string", "data");
     return storage_engine_
-        ->Get(minikv::StorageColumnFamily::kModule,
+        ->Get(minikv::StorageColumnFamily::kString,
               data_keyspace.EncodeKey(key), &scratch)
         .ok();
   }

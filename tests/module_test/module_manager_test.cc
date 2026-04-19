@@ -1,11 +1,16 @@
+#include <filesystem>
 #include <memory>
 #include <string>
+#include <unistd.h>
 #include <vector>
 
 #include "execution/command/cmd.h"
 #include "gtest/gtest.h"
 #include "execution/scheduler/scheduler.h"
+#include "runtime/config.h"
 #include "runtime/module/module_manager.h"
+#include "runtime/module/module_services.h"
+#include "storage/engine/storage_engine.h"
 #include "types/bitmap/bitmap_module.h"
 #include "core/core_module.h"
 #include "types/hash/hash_module.h"
@@ -138,6 +143,45 @@ TEST(ModuleManagerTest, StartFailureStopsLoadedModulesInReverseOrder) {
   EXPECT_EQ(events, (std::vector<std::string>{"alpha.load", "beta.load",
                                               "alpha.start", "beta.start",
                                               "beta.stop", "alpha.stop"}));
+}
+
+TEST(ModuleManagerTest, RejectsLegacyTypedDataStoredInModuleColumnFamily) {
+  static int counter = 0;
+  const std::string db_path =
+      (std::filesystem::temp_directory_path() /
+       ("minikv-legacy-layout-test-" + std::to_string(::getpid()) + "-" +
+        std::to_string(counter++)))
+          .string();
+
+  {
+    minikv::Config config;
+    config.db_path = db_path;
+    minikv::StorageEngine storage_engine;
+    ASSERT_TRUE(storage_engine.Open(config).ok());
+
+    const minikv::ModuleKeyspace legacy_keyspace("string", "data");
+    ASSERT_TRUE(storage_engine
+                    .Put(minikv::StorageColumnFamily::kModule,
+                         legacy_keyspace.EncodeKey("legacy:key"), "value")
+                    .ok());
+
+    std::vector<std::string> events;
+    std::vector<std::unique_ptr<minikv::Module>> modules;
+    modules.push_back(
+        std::make_unique<RecordingModule>("alpha", "ALPHA", &events));
+
+    minikv::Scheduler scheduler(1, 8);
+    minikv::ModuleManager manager(&storage_engine, &scheduler,
+                                  std::move(modules));
+    const rocksdb::Status status = manager.Initialize();
+    ASSERT_TRUE(status.IsInvalidArgument());
+    EXPECT_NE(status.ToString().find("legacy typed data"), std::string::npos);
+    EXPECT_NE(status.ToString().find("string.data"), std::string::npos);
+    EXPECT_TRUE(events.empty());
+  }
+
+  rocksdb::Options options;
+  ASSERT_TRUE(rocksdb::DestroyDB(db_path, options).ok());
 }
 
 TEST(ModuleManagerTest, RejectsCommandNameConflictsDuringLoad) {

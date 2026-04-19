@@ -37,6 +37,9 @@ struct StreamReadResult {
 class StreamModule : public Module, public WholeKeyDeleteHandler {
  public:
   std::string_view Name() const override { return "stream"; }
+  StorageColumnFamily DefaultStorageColumnFamily() const override {
+    return StorageColumnFamily::kStream;
+  }
   rocksdb::Status OnLoad(ModuleServices& services) override;
   rocksdb::Status OnStart(ModuleServices& services) override;
   void OnStop(ModuleServices& services) override;

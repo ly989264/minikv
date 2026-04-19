@@ -32,7 +32,7 @@ Current documents:
 - [layers/worker.md](./layers/worker.md): scheduler, worker queues, keyed
   locking, and backpressure
 - [layers/codec.md](./layers/codec.md): key encodings, metadata ownership, and
-  hash/module storage prefixes
+  hash/type-specific/module storage prefixes
 - [perf/baseline.md](./perf/baseline.md): baseline validation and smoke-test
   workflow for the standalone project
 - [adr/0001-current-minikv-boundaries.md](./adr/0001-current-minikv-boundaries.md):

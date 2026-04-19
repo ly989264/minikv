@@ -39,6 +39,9 @@ struct JsonNumberResult {
 class JsonModule : public Module, public WholeKeyDeleteHandler {
  public:
   std::string_view Name() const override { return "json"; }
+  StorageColumnFamily DefaultStorageColumnFamily() const override {
+    return StorageColumnFamily::kJson;
+  }
   rocksdb::Status OnLoad(ModuleServices& services) override;
   rocksdb::Status OnStart(ModuleServices& services) override;
   void OnStop(ModuleServices& services) override;

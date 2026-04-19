@@ -66,16 +66,18 @@ Responsibilities:
   `WriteContext`
 
 Modules can mutate storage through this service, but they cannot access the raw
-kernel write path directly. Module-private state goes through the shared
-RocksDB `module` column family rather than having modules bind themselves to
-the global `StorageColumnFamily` layout.
+kernel write path directly. Keyspace-aware writes go through the module's
+default `StorageColumnFamily` rather than hard-coding one global target.
+Builtin type modules bind their keyspaces to dedicated type-specific column
+families, while auxiliary module state stays in the shared RocksDB `module`
+column family.
 
 `ModuleKeyspace` is the storage-side companion to `ModuleNamespace`:
 
 - `ModuleNamespace` identifies the owning module for commands, exports, and
   metrics
 - `ModuleKeyspace` identifies one module-owned storage subspace inside the
-  shared `module` column family
+  owning module's default column family
 - one module may own multiple keyspaces such as `search.docs` and
   `search.postings`
 - keyspace-aware APIs encode the module name plus the local keyspace name into
@@ -83,8 +85,9 @@ the global `StorageColumnFamily` layout.
   onto RocksDB
 
 Current hash module behavior is intentionally unchanged. Hash data still uses
-the existing `meta` and `hash` column families, while new module-private state
-should use `ModuleKeyspace`.
+the existing `meta` and `hash` column families, while keyspace-aware APIs are
+used by string/list/set/zset/stream/json/geo storage plus new auxiliary
+module-private state.
 
 Compatibility note:
 

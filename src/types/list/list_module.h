@@ -17,6 +17,9 @@ class ModuleWriteBatch;
 class ListModule : public Module, public WholeKeyDeleteHandler {
  public:
   std::string_view Name() const override { return "list"; }
+  StorageColumnFamily DefaultStorageColumnFamily() const override {
+    return StorageColumnFamily::kList;
+  }
   rocksdb::Status OnLoad(ModuleServices& services) override;
   rocksdb::Status OnStart(ModuleServices& services) override;
   void OnStop(ModuleServices& services) override;

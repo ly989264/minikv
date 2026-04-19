@@ -38,8 +38,10 @@ class ModuleManager {
         : module(std::move(module_value)), services(std::move(services_value)) {}
   };
 
+  rocksdb::Status ValidateStorageLayout() const;
   void StopLoadedModules();
 
+  StorageEngine* storage_engine_ = nullptr;
   CommandRegistry command_registry_;
   std::shared_ptr<ModuleMetricsStore> metrics_store_;
   std::shared_ptr<ModuleExportRegistry::SharedState> export_store_;

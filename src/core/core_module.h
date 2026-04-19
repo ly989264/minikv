@@ -15,6 +15,9 @@ class CoreModule : public Module, public WholeKeyDeleteRegistry {
   explicit CoreModule(TimeSource time_source = {});
 
   std::string_view Name() const override { return "core"; }
+  StorageColumnFamily DefaultStorageColumnFamily() const override {
+    return StorageColumnFamily::kModule;
+  }
   rocksdb::Status OnLoad(ModuleServices& services) override;
   rocksdb::Status OnStart(ModuleServices& services) override;
   void OnStop(ModuleServices& services) override;

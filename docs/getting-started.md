@@ -208,7 +208,7 @@ Sorted-set semantics layer.
 - publishing `zset.bridge` so other builtin modules can observe zset writes or
   request geo-encoded zset inserts without reaching into zset-private storage
 - maintaining member-to-score data plus a score-ordered secondary index in
-  module-private keyspaces
+  zset-owned keyspaces in the dedicated `zset` column family
 - bumping metadata versions when recreating expired or tombstoned zsets
 
 ### `src/types/geo/*`
@@ -218,7 +218,8 @@ Geospatial semantics layer.
 `GeoModule` is responsible for:
 
 - registering `GEOADD`, `GEOPOS`, `GEOHASH`, `GEODIST`, and `GEOSEARCH`
-- maintaining geo-only sidecar state in geo-owned module keyspaces
+- maintaining geo-only sidecar state in geo-owned keyspaces inside the
+  dedicated `zset` column family
 - reusing zset storage as the authoritative member/score source through the
   exported `zset.bridge`
 - observing zset mutations so geo sidecar rows stay in sync with `ZADD`,
@@ -233,8 +234,8 @@ Stream semantics layer.
 - registering `XADD`, `XTRIM`, `XDEL`, `XLEN`, `XRANGE`, `XREVRANGE`, and
   `XREAD`
 - registering itself as the whole-key delete handler for stream values
-- maintaining stream entries plus last-accepted-ID state in module-private
-  keyspaces inside the shared `module` column family
+- maintaining stream entries plus last-accepted-ID state in stream-owned
+  keyspaces inside the dedicated `stream` column family
 - bumping metadata versions when recreating expired or tombstoned streams
 
 ### `src/storage/engine/*`
@@ -279,7 +280,8 @@ Important boundary:
 
 - `KeyCodec` owns the key encodings
 - `DefaultCoreKeyService` owns the metadata value encoding and decoding
-- `ModuleKeyspace` encoding for the `module` column family lives in
+- `ModuleKeyspace` encoding for type-specific and auxiliary module keyspaces
+  lives in
   `src/runtime/module/module_services.cc`
 
 ## Thread Model

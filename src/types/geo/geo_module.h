@@ -64,6 +64,9 @@ struct GeoSearchMatch {
 class GeoModule : public Module, public ZSetObserver {
  public:
   std::string_view Name() const override { return "geo"; }
+  StorageColumnFamily DefaultStorageColumnFamily() const override {
+    return StorageColumnFamily::kZSet;
+  }
   rocksdb::Status OnLoad(ModuleServices& services) override;
   rocksdb::Status OnStart(ModuleServices& services) override;
   void OnStop(ModuleServices& services) override;

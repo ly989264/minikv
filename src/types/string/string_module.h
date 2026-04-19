@@ -19,6 +19,9 @@ class StringModule : public Module,
                      public StringBridge {
  public:
   std::string_view Name() const override { return "string"; }
+  StorageColumnFamily DefaultStorageColumnFamily() const override {
+    return StorageColumnFamily::kString;
+  }
   rocksdb::Status OnLoad(ModuleServices& services) override;
   rocksdb::Status OnStart(ModuleServices& services) override;
   void OnStop(ModuleServices& services) override;

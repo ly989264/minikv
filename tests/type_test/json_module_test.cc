@@ -87,6 +87,15 @@ class JsonModuleCommandTest : public ::testing::Test {
     return metadata;
   }
 
+  bool HasRawJsonValue(const std::string& key) const {
+    std::string raw_value;
+    const minikv::ModuleKeyspace data_keyspace("json", "data");
+    return storage_engine_
+        ->Get(minikv::StorageColumnFamily::kJson, data_keyspace.EncodeKey(key),
+              &raw_value)
+        .ok();
+  }
+
   void AdvanceTimeMs(uint64_t delta_ms) { now_ms_ += delta_ms; }
 
   static inline int counter_ = 0;
@@ -104,6 +113,7 @@ TEST_F(JsonModuleCommandTest, SetGetTypeAndNestedCreateWork) {
   ASSERT_TRUE(response.status.ok());
   ASSERT_TRUE(response.reply.IsSimpleString());
   EXPECT_EQ(response.reply.string(), "OK");
+  EXPECT_TRUE(HasRawJsonValue("doc:1"));
 
   response = Execute({"JSON.SET", "doc:1", "$.nested.extra", "2"});
   ASSERT_TRUE(response.status.ok());

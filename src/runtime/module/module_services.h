@@ -33,8 +33,11 @@ class ModuleNamespace {
 class ModuleKeyspace {
  public:
   ModuleKeyspace();
+  ModuleKeyspace(StorageColumnFamily column_family, std::string module_name,
+                 std::string local_name);
   ModuleKeyspace(std::string module_name, std::string local_name);
 
+  StorageColumnFamily column_family() const { return column_family_; }
   const std::string& module_name() const { return module_name_; }
   const std::string& local_name() const { return local_name_; }
   bool valid() const;
@@ -44,6 +47,7 @@ class ModuleKeyspace {
   bool DecodeKey(const rocksdb::Slice& storage_key, std::string* key) const;
 
  private:
+  StorageColumnFamily column_family_ = StorageColumnFamily::kModule;
   std::string module_name_;
   std::string local_name_;
   std::string encoded_prefix_;
@@ -190,7 +194,9 @@ class ModuleExportRegistry {
 
 class ModuleStorage {
  public:
-  ModuleStorage(ModuleNamespace module_namespace, StorageEngine* storage_engine);
+  ModuleStorage(ModuleNamespace module_namespace, StorageEngine* storage_engine,
+                StorageColumnFamily default_column_family =
+                    StorageColumnFamily::kModule);
 
   ModuleKeyspace Keyspace(const std::string& local_name) const;
 
@@ -199,12 +205,15 @@ class ModuleStorage {
  private:
   ModuleNamespace module_namespace_;
   StorageEngine* storage_engine_ = nullptr;
+  StorageColumnFamily default_column_family_ = StorageColumnFamily::kModule;
 };
 
 class ModuleSnapshotService {
  public:
   ModuleSnapshotService(ModuleNamespace module_namespace,
-                        const StorageEngine* storage_engine);
+                        const StorageEngine* storage_engine,
+                        StorageColumnFamily default_column_family =
+                            StorageColumnFamily::kModule);
 
   ModuleKeyspace Keyspace(const std::string& local_name) const;
 
@@ -213,6 +222,7 @@ class ModuleSnapshotService {
  private:
   ModuleNamespace module_namespace_;
   const StorageEngine* storage_engine_ = nullptr;
+  StorageColumnFamily default_column_family_ = StorageColumnFamily::kModule;
 };
 
 class ModuleBackgroundService {

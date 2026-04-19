@@ -2,6 +2,7 @@
 #include <memory>
 #include <string>
 #include <unistd.h>
+#include <vector>
 
 #include "runtime/config.h"
 #include "gtest/gtest.h"
@@ -39,13 +40,17 @@ class ModuleKeyspaceTest : public ::testing::Test {
 
 TEST_F(ModuleKeyspaceTest, SeparatesModuleIdentityFromStorageSubspaces) {
   minikv::ModuleStorage search_storage(minikv::ModuleNamespace("search"),
-                                       storage_engine_.get());
+                                       storage_engine_.get(),
+                                       minikv::StorageColumnFamily::kModule);
   minikv::ModuleStorage analytics_storage(minikv::ModuleNamespace("analytics"),
-                                          storage_engine_.get());
+                                          storage_engine_.get(),
+                                          minikv::StorageColumnFamily::kModule);
   minikv::ModuleSnapshotService search_snapshots(
-      minikv::ModuleNamespace("search"), storage_engine_.get());
+      minikv::ModuleNamespace("search"), storage_engine_.get(),
+      minikv::StorageColumnFamily::kModule);
   minikv::ModuleSnapshotService analytics_snapshots(
-      minikv::ModuleNamespace("analytics"), storage_engine_.get());
+      minikv::ModuleNamespace("analytics"), storage_engine_.get(),
+      minikv::StorageColumnFamily::kModule);
 
   const minikv::ModuleKeyspace search_docs = search_storage.Keyspace("docs");
   const minikv::ModuleKeyspace search_terms = search_storage.Keyspace("terms");
@@ -53,6 +58,7 @@ TEST_F(ModuleKeyspaceTest, SeparatesModuleIdentityFromStorageSubspaces) {
       analytics_storage.Keyspace("docs");
 
   EXPECT_TRUE(search_docs.valid());
+  EXPECT_EQ(search_docs.column_family(), minikv::StorageColumnFamily::kModule);
   EXPECT_EQ(search_docs.module_name(), "search");
   EXPECT_EQ(search_docs.local_name(), "docs");
   EXPECT_EQ(search_docs.QualifiedName(), "search.docs");
@@ -97,9 +103,11 @@ TEST_F(ModuleKeyspaceTest, SeparatesModuleIdentityFromStorageSubspaces) {
 
 TEST_F(ModuleKeyspaceTest, RejectsInvalidKeyspaceOnReadAndWrite) {
   minikv::ModuleStorage storage(minikv::ModuleNamespace("search"),
-                                storage_engine_.get());
+                                storage_engine_.get(),
+                                minikv::StorageColumnFamily::kModule);
   minikv::ModuleSnapshotService snapshots(minikv::ModuleNamespace("search"),
-                                          storage_engine_.get());
+                                          storage_engine_.get(),
+                                          minikv::StorageColumnFamily::kModule);
   const minikv::ModuleKeyspace invalid("search", "");
 
   std::unique_ptr<minikv::ModuleWriteBatch> batch = storage.CreateWriteBatch();
@@ -114,6 +122,37 @@ TEST_F(ModuleKeyspaceTest, RejectsInvalidKeyspaceOnReadAndWrite) {
                                            const rocksdb::Slice&) {
         return true;
       }).IsInvalidArgument());
+}
+
+TEST_F(ModuleKeyspaceTest, StorageEngineCreatesAndReopensAllRequiredColumnFamilies) {
+  const std::vector<minikv::StorageColumnFamily> column_families = {
+      minikv::StorageColumnFamily::kDefault,   minikv::StorageColumnFamily::kMeta,
+      minikv::StorageColumnFamily::kString,    minikv::StorageColumnFamily::kHash,
+      minikv::StorageColumnFamily::kList,      minikv::StorageColumnFamily::kSet,
+      minikv::StorageColumnFamily::kZSet,      minikv::StorageColumnFamily::kStream,
+      minikv::StorageColumnFamily::kJson,      minikv::StorageColumnFamily::kTimeseries,
+      minikv::StorageColumnFamily::kVectorSet, minikv::StorageColumnFamily::kModule,
+  };
+
+  for (size_t index = 0; index < column_families.size(); ++index) {
+    const std::string key = "cf:" + std::to_string(index);
+    const std::string value = "value:" + std::to_string(index);
+    ASSERT_TRUE(storage_engine_->Put(column_families[index], key, value).ok());
+  }
+
+  storage_engine_.reset();
+  minikv::Config config;
+  config.db_path = db_path_;
+  storage_engine_ = std::make_unique<minikv::StorageEngine>();
+  ASSERT_TRUE(storage_engine_->Open(config).ok());
+
+  for (size_t index = 0; index < column_families.size(); ++index) {
+    const std::string key = "cf:" + std::to_string(index);
+    const std::string expected = "value:" + std::to_string(index);
+    std::string actual;
+    ASSERT_TRUE(storage_engine_->Get(column_families[index], key, &actual).ok());
+    EXPECT_EQ(actual, expected);
+  }
 }
 
 }  // namespace

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
@@ -18,7 +19,15 @@ class WriteContext;
 enum class StorageColumnFamily {
   kDefault,
   kMeta,
+  kString,
   kHash,
+  kList,
+  kSet,
+  kZSet,
+  kStream,
+  kJson,
+  kTimeseries,
+  kVectorSet,
   kModule,
 };
 
@@ -62,7 +71,15 @@ class StorageEngine {
   std::vector<rocksdb::ColumnFamilyHandle*> handles_;
   rocksdb::ColumnFamilyHandle* default_cf_ = nullptr;
   rocksdb::ColumnFamilyHandle* meta_cf_ = nullptr;
+  rocksdb::ColumnFamilyHandle* string_cf_ = nullptr;
   rocksdb::ColumnFamilyHandle* hash_cf_ = nullptr;
+  rocksdb::ColumnFamilyHandle* list_cf_ = nullptr;
+  rocksdb::ColumnFamilyHandle* set_cf_ = nullptr;
+  rocksdb::ColumnFamilyHandle* zset_cf_ = nullptr;
+  rocksdb::ColumnFamilyHandle* stream_cf_ = nullptr;
+  rocksdb::ColumnFamilyHandle* json_cf_ = nullptr;
+  rocksdb::ColumnFamilyHandle* timeseries_cf_ = nullptr;
+  rocksdb::ColumnFamilyHandle* vectorset_cf_ = nullptr;
   rocksdb::ColumnFamilyHandle* module_cf_ = nullptr;
 };
 

@@ -150,16 +150,24 @@ Important current boundaries:
 - `HashModule` exports `HashIndexingBridge` and registers itself as the
   `WholeKeyDeleteHandler` for hash keys
 - `StreamModule` registers itself as the `WholeKeyDeleteHandler` for stream
-  keys and keeps its stream-private entry and state keyspaces inside the shared
-  `module` column family
+  keys and keeps its stream-private entry and state keyspaces in the dedicated
+  `stream` column family through `ModuleKeyspace`
 
 ## Storage Model
 
-`StorageEngine` opens RocksDB with four column families:
+`StorageEngine` opens RocksDB with these column families:
 
 - `default`
 - `meta`
+- `string`
 - `hash`
+- `list`
+- `set`
+- `zset`
+- `stream`
+- `json`
+- `timeseries`
+- `vectorset`
 - `module`
 
 The active encodings are:
@@ -171,7 +179,10 @@ The active encodings are:
 - module keyspace prefix:
   `uint32(module_name_length) + module_name + uint32(local_name_length) + local_name`
 
-Module-private storage uses `ModuleKeyspace` on top of the shared `module`
+`ModuleKeyspace` owns the keyspace-prefix encoding and routes each keyspace into
+the owning module's default column family. Builtin type modules use
+type-specific column families such as `string`, `list`, `set`, `zset`,
+`stream`, and `json`. Auxiliary module state stays in the shared `module`
 column family. Hash user data still lives in `meta` and `hash`.
 
 The current metadata payload contains:

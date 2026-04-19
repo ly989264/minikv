@@ -29,6 +29,8 @@ Current user-visible data model:
 
 - string, hash, json, list, set, zset, and stream keys
 - per-key metadata with live, expired, and tombstone lifecycle states
+- type-specific RocksDB column families for string, hash, json, list, set,
+  zset, and stream entity data
 - module-private storage keyspaces in a shared RocksDB `module` column family
 
 ## Platform Note

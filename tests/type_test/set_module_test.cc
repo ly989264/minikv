@@ -133,7 +133,7 @@ class SetModuleTest : public ::testing::Test {
     minikv::WriteContext write_context(storage_engine_.get());
     const minikv::ModuleKeyspace members_keyspace("set", "members");
     ASSERT_TRUE(write_context
-                    .Put(minikv::StorageColumnFamily::kModule,
+                    .Put(minikv::StorageColumnFamily::kSet,
                          members_keyspace.EncodeKey(
                              EncodeSetMemberLocalKey(key, version, member)),
                          "")

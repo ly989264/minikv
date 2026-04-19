@@ -178,7 +178,7 @@ class StreamModuleTest : public ::testing::Test {
     minikv::WriteContext write_context(storage_engine_.get());
     const minikv::ModuleKeyspace entries_keyspace("stream", "entries");
     ASSERT_TRUE(write_context
-                    .Put(minikv::StorageColumnFamily::kModule,
+                    .Put(minikv::StorageColumnFamily::kStream,
                          entries_keyspace.EncodeKey(
                              EncodeStreamEntryLocalKey(key, version, id)),
                          EncodeStreamEntryValue(values))
@@ -191,7 +191,7 @@ class StreamModuleTest : public ::testing::Test {
     minikv::WriteContext write_context(storage_engine_.get());
     const minikv::ModuleKeyspace state_keyspace("stream", "state");
     ASSERT_TRUE(write_context
-                    .Put(minikv::StorageColumnFamily::kModule,
+                    .Put(minikv::StorageColumnFamily::kStream,
                          state_keyspace.EncodeKey(
                              EncodeStreamStateLocalKey(key, version)),
                          EncodeStreamStateValue(id))
@@ -203,7 +203,8 @@ class StreamModuleTest : public ::testing::Test {
                       const std::string& local_key) const {
     std::string value;
     return storage_engine_
-        ->Get(minikv::StorageColumnFamily::kModule, keyspace.EncodeKey(local_key),
+        ->Get(minikv::StorageColumnFamily::kStream,
+              keyspace.EncodeKey(local_key),
               &value)
         .ok();
   }

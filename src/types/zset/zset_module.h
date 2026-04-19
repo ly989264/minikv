@@ -20,6 +20,9 @@ class ZSetModule : public Module,
                    public WholeKeyDeleteHandler {
  public:
   std::string_view Name() const override { return "zset"; }
+  StorageColumnFamily DefaultStorageColumnFamily() const override {
+    return StorageColumnFamily::kZSet;
+  }
   rocksdb::Status OnLoad(ModuleServices& services) override;
   rocksdb::Status OnStart(ModuleServices& services) override;
   void OnStop(ModuleServices& services) override;

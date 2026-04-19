@@ -137,7 +137,7 @@ class ListModuleTest : public ::testing::Test {
     minikv::WriteContext write_context(storage_engine_.get());
     const minikv::ModuleKeyspace entries_keyspace("list", "entries");
     ASSERT_TRUE(write_context
-                    .Put(minikv::StorageColumnFamily::kModule,
+                    .Put(minikv::StorageColumnFamily::kList,
                          entries_keyspace.EncodeKey(
                              EncodeListEntryLocalKey(key, version, sequence)),
                          element)
@@ -150,7 +150,7 @@ class ListModuleTest : public ::testing::Test {
     minikv::WriteContext write_context(storage_engine_.get());
     const minikv::ModuleKeyspace state_keyspace("list", "state");
     ASSERT_TRUE(write_context
-                    .Put(minikv::StorageColumnFamily::kModule,
+                    .Put(minikv::StorageColumnFamily::kList,
                          state_keyspace.EncodeKey(
                              EncodeListStateLocalKey(key, version)),
                          EncodeListStateValue(head_seq, tail_seq))
@@ -163,7 +163,7 @@ class ListModuleTest : public ::testing::Test {
     std::string scratch;
     const minikv::ModuleKeyspace entries_keyspace("list", "entries");
     const rocksdb::Status status = storage_engine_->Get(
-        minikv::StorageColumnFamily::kModule,
+        minikv::StorageColumnFamily::kList,
         entries_keyspace.EncodeKey(
             EncodeListEntryLocalKey(key, version, sequence)),
         &scratch);
@@ -174,7 +174,7 @@ class ListModuleTest : public ::testing::Test {
     std::string scratch;
     const minikv::ModuleKeyspace state_keyspace("list", "state");
     const rocksdb::Status status = storage_engine_->Get(
-        minikv::StorageColumnFamily::kModule,
+        minikv::StorageColumnFamily::kList,
         state_keyspace.EncodeKey(EncodeListStateLocalKey(key, version)),
         &scratch);
     return status.ok();
