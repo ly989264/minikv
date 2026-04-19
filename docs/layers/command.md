@@ -43,6 +43,9 @@ Supported commands:
 - `SET`
 - `GET`
 - `STRLEN`
+- `GETBIT`
+- `SETBIT`
+- `BITCOUNT`
 - `HSET`
 - `HGETALL`
 - `HDEL`
@@ -90,6 +93,7 @@ Those commands are registered by builtin modules during startup:
 - `CoreModule`: `PING`, `TYPE`, `EXISTS`, `DEL`, `EXPIRE`, `TTL`, `PTTL`,
   `PERSIST`
 - `StringModule`: `SET`, `GET`, `STRLEN`
+- `BitmapModule`: `GETBIT`, `SETBIT`, `BITCOUNT`
 - `HashModule`: `HSET`, `HGETALL`, `HDEL`
 - `ListModule`: `LPUSH`, `LPOP`, `LRANGE`, `RPUSH`, `RPOP`, `LREM`, `LTRIM`,
   `LLEN`
@@ -150,9 +154,9 @@ Current builtin commands use:
 - bulk string: `TYPE`, `GET`, `LPOP`, `RPOP`, `SRANDMEMBER`, `SPOP`,
   `ZINCRBY`, `ZSCORE`, `GEODIST`, `XADD`
 - integer: `EXISTS`, `DEL`, `EXPIRE`, `TTL`, `PTTL`, `PERSIST`, `STRLEN`,
-  `HSET`, `HDEL`, `LLEN`, `LPUSH`, `RPUSH`, `LREM`, `SADD`, `SCARD`,
-  `SISMEMBER`, `SREM`, `ZADD`, `ZCARD`, `ZCOUNT`, `ZLEXCOUNT`, `ZRANK`,
-  `ZREM`, `GEOADD`, `XTRIM`, `XDEL`, `XLEN`
+  `GETBIT`, `SETBIT`, `BITCOUNT`, `HSET`, `HDEL`, `LLEN`, `LPUSH`, `RPUSH`,
+  `LREM`, `SADD`, `SCARD`, `SISMEMBER`, `SREM`, `ZADD`, `ZCARD`, `ZCOUNT`,
+  `ZLEXCOUNT`, `ZRANK`, `ZREM`, `GEOADD`, `XTRIM`, `XDEL`, `XLEN`
 - flat bulk-string array: `HGETALL`, `LRANGE`, `SMEMBERS`, `ZRANGE`,
   `ZRANGEBYLEX`, `ZRANGEBYSCORE`
 - nested array: `GEOPOS`, `GEOSEARCH` with `WITH*`, `XRANGE`, `XREVRANGE`,

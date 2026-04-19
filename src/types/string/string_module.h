@@ -5,6 +5,7 @@
 
 #include "core/whole_key_delete_handler.h"
 #include "runtime/module/module.h"
+#include "types/string/string_bridge.h"
 
 namespace minikv {
 
@@ -13,7 +14,9 @@ class ModuleServices;
 class ModuleSnapshot;
 class ModuleWriteBatch;
 
-class StringModule : public Module, public WholeKeyDeleteHandler {
+class StringModule : public Module,
+                     public WholeKeyDeleteHandler,
+                     public StringBridge {
  public:
   std::string_view Name() const override { return "string"; }
   rocksdb::Status OnLoad(ModuleServices& services) override;
@@ -26,10 +29,11 @@ class StringModule : public Module, public WholeKeyDeleteHandler {
                                  const std::string& key,
                                  const KeyLookup& lookup) override;
 
-  rocksdb::Status SetValue(const std::string& key, const std::string& value);
+  rocksdb::Status SetValue(const std::string& key,
+                           const std::string& value) override;
   rocksdb::Status GetValue(const std::string& key, std::string* value,
-                           bool* found);
-  rocksdb::Status Length(const std::string& key, uint64_t* length);
+                           bool* found) override;
+  rocksdb::Status Length(const std::string& key, uint64_t* length) override;
 
  private:
   rocksdb::Status EnsureReady() const;

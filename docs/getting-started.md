@@ -15,7 +15,7 @@ Current user-visible scope:
 
 - supported commands:
   `PING`, `TYPE`, `EXISTS`, `DEL`, `EXPIRE`, `TTL`, `PTTL`, `PERSIST`,
-  `SET`, `GET`, `STRLEN`,
+  `SET`, `GET`, `STRLEN`, `GETBIT`, `SETBIT`, `BITCOUNT`,
   `HSET`, `HGETALL`, `HDEL`,
   `LPUSH`, `LPOP`, `LRANGE`, `RPUSH`, `RPOP`, `LREM`, `LTRIM`, `LLEN`,
   `SADD`, `SCARD`, `SMEMBERS`, `SISMEMBER`, `SPOP`, `SRANDMEMBER`, `SREM`,
@@ -55,8 +55,9 @@ Important behavior:
 
 - `MiniKV::Open()` opens RocksDB before publishing the runtime
 - builtin modules load through `ModuleManager`
-- current builtin load order is `CoreModule`, `StringModule`, `HashModule`,
-  `ListModule`, `SetModule`, `ZSetModule`, `GeoModule`, then `StreamModule`
+- current builtin load order is `CoreModule`, `StringModule`, `BitmapModule`,
+  `HashModule`, `ListModule`, `SetModule`, `ZSetModule`, `GeoModule`, then
+  `StreamModule`
 - current module support is builtin-only and source-level only
 - `MiniKV` exists to share runtime state with `NetworkServer`
 
@@ -159,6 +160,18 @@ Key lifecycle states visible in code:
 - live
 - expired
 - tombstone
+
+### `src/types/string/*` and `src/types/bitmap/*`
+
+String and bitmap semantics share one underlying byte value.
+
+- `StringModule` owns string metadata, string storage, the `string.bridge`
+  export, and whole-key delete handling for `ObjectType::kString`
+- `BitmapModule` registers `GETBIT`, `SETBIT`, and `BITCOUNT`
+- bitmap commands read and write through `string.bridge` rather than through a
+  bitmap-private keyspace
+- `GET`, `SET`, `STRLEN`, `GETBIT`, `SETBIT`, and `BITCOUNT` therefore all
+  operate on the same byte sequence for one string key
 
 ### `src/types/hash/*`
 

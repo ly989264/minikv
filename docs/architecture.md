@@ -38,7 +38,9 @@ The main responsibilities are:
   `src/execution/worker/`: command creation, command registry, reply tree,
   scheduler, keyed workers, and execution coordination
 - `src/core/`: protocol-level builtin commands and key lifecycle services
-- `src/types/string/`: string builtin module and string command handling
+- `src/types/string/`: string builtin module, shared string storage, and the
+  exported string bridge
+- `src/types/bitmap/`: bitmap builtin module layered on shared string storage
 - `src/types/hash/`: hash builtin module, exported indexing bridge, observer
   interface, whole-key delete handling, and command registrations
 - `src/types/list/`: list builtin module and list command handling
@@ -54,7 +56,7 @@ Public behavior is intentionally narrow today:
 
 - supported commands:
   `PING`, `TYPE`, `EXISTS`, `DEL`, `EXPIRE`, `TTL`, `PTTL`, `PERSIST`,
-  `SET`, `GET`, `STRLEN`,
+  `SET`, `GET`, `STRLEN`, `GETBIT`, `SETBIT`, `BITCOUNT`,
   `HSET`, `HGETALL`, `HDEL`,
   `LPUSH`, `LPOP`, `LRANGE`, `RPUSH`, `RPOP`, `LREM`, `LTRIM`, `LLEN`,
   `SADD`, `SCARD`, `SMEMBERS`, `SISMEMBER`, `SPOP`, `SRANDMEMBER`, `SREM`,
@@ -109,18 +111,20 @@ Builtin module load order is fixed:
 
 1. `CoreModule`
 2. `StringModule`
-3. `HashModule`
-4. `ListModule`
-5. `SetModule`
-6. `ZSetModule`
-7. `GeoModule`
-8. `StreamModule`
+3. `BitmapModule`
+4. `HashModule`
+5. `ListModule`
+6. `SetModule`
+7. `ZSetModule`
+8. `GeoModule`
+9. `StreamModule`
 
 Current command ownership:
 
 - `CoreModule`: `PING`, `TYPE`, `EXISTS`, `DEL`, `EXPIRE`, `TTL`, `PTTL`,
   `PERSIST`
 - `StringModule`: `SET`, `GET`, `STRLEN`
+- `BitmapModule`: `GETBIT`, `SETBIT`, `BITCOUNT`
 - `HashModule`: `HSET`, `HGETALL`, `HDEL`
 - `ListModule`: `LPUSH`, `LPOP`, `LRANGE`, `RPUSH`, `RPOP`, `LREM`, `LTRIM`,
   `LLEN`

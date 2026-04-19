@@ -50,6 +50,14 @@ TEST(ReplyEncodeTest, KeepsExistingSimpleIntegerAndArrayShapes) {
             "$5\r\nalice\r\n");
 }
 
+TEST(ReplyEncodeTest, EncodesBulkStringsWithEmbeddedNullBytes) {
+  minikv::CommandResponse response;
+  response.status = rocksdb::Status::OK();
+  response.reply = minikv::ReplyNode::BulkString(std::string("\0\x01", 2));
+
+  EXPECT_EQ(minikv::EncodeResponse(response), std::string("$2\r\n\0\x01\r\n", 8));
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {

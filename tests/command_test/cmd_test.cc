@@ -12,6 +12,7 @@
 #include "storage/engine/storage_engine.h"
 #include "runtime/module/module.h"
 #include "runtime/module/module_manager.h"
+#include "types/bitmap/bitmap_module.h"
 #include "core/core_module.h"
 #include "types/hash/hash_module.h"
 #include "types/list/list_module.h"
@@ -202,12 +203,15 @@ class ModuleRuntimeTest : public ::testing::Test {
     std::vector<std::unique_ptr<minikv::Module>> modules;
     modules.push_back(std::make_unique<minikv::CoreModule>(
         [this]() { return now_ms_; }));
-    auto hash_module = std::make_unique<minikv::HashModule>();
-    hash_module_ = hash_module.get();
-    modules.push_back(std::move(hash_module));
     auto string_module = std::make_unique<minikv::StringModule>();
     string_module_ = string_module.get();
     modules.push_back(std::move(string_module));
+    auto bitmap_module = std::make_unique<minikv::BitmapModule>();
+    bitmap_module_ = bitmap_module.get();
+    modules.push_back(std::move(bitmap_module));
+    auto hash_module = std::make_unique<minikv::HashModule>();
+    hash_module_ = hash_module.get();
+    modules.push_back(std::move(hash_module));
     auto list_module = std::make_unique<minikv::ListModule>();
     list_module_ = list_module.get();
     modules.push_back(std::move(list_module));
@@ -256,6 +260,7 @@ class ModuleRuntimeTest : public ::testing::Test {
   std::unique_ptr<minikv::Scheduler> scheduler_;
   std::unique_ptr<minikv::ModuleManager> module_manager_;
   std::unique_ptr<minikv::StorageEngine> storage_engine_;
+  minikv::BitmapModule* bitmap_module_ = nullptr;
   minikv::HashModule* hash_module_ = nullptr;
   minikv::StringModule* string_module_ = nullptr;
   minikv::ListModule* list_module_ = nullptr;
@@ -337,6 +342,24 @@ TEST_F(ModuleRuntimeTest, FindsRegisteredCommandsByName) {
   EXPECT_EQ(strlen->name, "STRLEN");
   EXPECT_EQ(strlen->owner_module, "string");
   ExpectFlags(strlen->flags, true, false, true, false);
+
+  const minikv::CmdRegistration* getbit = registry().Find("GETBIT");
+  ASSERT_NE(getbit, nullptr);
+  EXPECT_EQ(getbit->name, "GETBIT");
+  EXPECT_EQ(getbit->owner_module, "bitmap");
+  ExpectFlags(getbit->flags, true, false, true, false);
+
+  const minikv::CmdRegistration* setbit = registry().Find("SETBIT");
+  ASSERT_NE(setbit, nullptr);
+  EXPECT_EQ(setbit->name, "SETBIT");
+  EXPECT_EQ(setbit->owner_module, "bitmap");
+  ExpectFlags(setbit->flags, false, true, true, false);
+
+  const minikv::CmdRegistration* bitcount = registry().Find("BITCOUNT");
+  ASSERT_NE(bitcount, nullptr);
+  EXPECT_EQ(bitcount->name, "BITCOUNT");
+  EXPECT_EQ(bitcount->owner_module, "bitmap");
+  ExpectFlags(bitcount->flags, true, false, false, true);
 
   const minikv::CmdRegistration* hgetall = registry().Find("HGETALL");
   ASSERT_NE(hgetall, nullptr);
@@ -679,6 +702,37 @@ TEST_F(ModuleRuntimeTest, CreatesCommandsFromRespParts) {
   ASSERT_NE(lower_string, nullptr);
   EXPECT_EQ(lower_string->Name(), "GET");
 
+  std::unique_ptr<minikv::Cmd> getbit;
+  ASSERT_TRUE(
+      minikv::CreateCmd(registry(), {"GETBIT", "str:1", "7"}, &getbit).ok());
+  ASSERT_NE(getbit, nullptr);
+  EXPECT_EQ(getbit->Name(), "GETBIT");
+  EXPECT_EQ(getbit->RouteKey(), "str:1");
+  ExpectLockPlan(getbit->lock_plan(), minikv::Cmd::LockPlan::Kind::kSingle,
+                 "str:1", {});
+  ExpectFlags(getbit->Flags(), true, false, true, false);
+
+  std::unique_ptr<minikv::Cmd> setbit;
+  ASSERT_TRUE(
+      minikv::CreateCmd(registry(), {"SETBIT", "str:1", "7", "1"}, &setbit)
+          .ok());
+  ASSERT_NE(setbit, nullptr);
+  EXPECT_EQ(setbit->Name(), "SETBIT");
+  EXPECT_EQ(setbit->RouteKey(), "str:1");
+  ExpectLockPlan(setbit->lock_plan(), minikv::Cmd::LockPlan::Kind::kSingle,
+                 "str:1", {});
+  ExpectFlags(setbit->Flags(), false, true, true, false);
+
+  std::unique_ptr<minikv::Cmd> bitcount;
+  ASSERT_TRUE(
+      minikv::CreateCmd(registry(), {"BITCOUNT", "str:1"}, &bitcount).ok());
+  ASSERT_NE(bitcount, nullptr);
+  EXPECT_EQ(bitcount->Name(), "BITCOUNT");
+  EXPECT_EQ(bitcount->RouteKey(), "str:1");
+  ExpectLockPlan(bitcount->lock_plan(), minikv::Cmd::LockPlan::Kind::kSingle,
+                 "str:1", {});
+  ExpectFlags(bitcount->Flags(), true, false, false, true);
+
   std::unique_ptr<minikv::Cmd> lpush;
   ASSERT_TRUE(
       minikv::CreateCmd(registry(), {"LPUSH", "list:1", "a", "b"}, &lpush)
@@ -833,6 +887,36 @@ TEST_F(ModuleRuntimeTest, RejectsBadArgumentsAndNullOutputs) {
   status = minikv::CreateCmd(registry(), {"STRLEN", "str:1", "extra"}, &cmd);
   ASSERT_TRUE(status.IsInvalidArgument());
   EXPECT_NE(status.ToString().find("STRLEN takes no extra arguments"),
+            std::string::npos);
+
+  status = minikv::CreateCmd(registry(), {"GETBIT", "str:1"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("GETBIT requires offset"),
+            std::string::npos);
+
+  status = minikv::CreateCmd(registry(), {"GETBIT", "str:1", "-1"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("GETBIT requires non-negative integer offset"),
+            std::string::npos);
+
+  status = minikv::CreateCmd(registry(), {"SETBIT", "str:1", "7"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("SETBIT requires offset and bit"),
+            std::string::npos);
+
+  status = minikv::CreateCmd(registry(), {"SETBIT", "str:1", "bad", "1"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("SETBIT requires non-negative integer offset"),
+            std::string::npos);
+
+  status = minikv::CreateCmd(registry(), {"SETBIT", "str:1", "7", "2"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("SETBIT bit must be 0 or 1"),
+            std::string::npos);
+
+  status = minikv::CreateCmd(registry(), {"BITCOUNT", "str:1", "0"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("BITCOUNT takes no extra arguments"),
             std::string::npos);
 
   status = minikv::CreateCmd(registry(), {"HDEL", "user:1"}, &cmd);
@@ -1497,6 +1581,56 @@ TEST_F(ModuleRuntimeTest, StringCommandsExecuteAgainstEngine) {
   EXPECT_EQ(response.reply.integer(), 0);
 }
 
+TEST_F(ModuleRuntimeTest, BitmapCommandsShareStringBytesWithStringCommands) {
+  minikv::CommandResponse response =
+      CreateFromParts({"SETBIT", "str:bitmap", "15", "1"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsInteger());
+  EXPECT_EQ(response.reply.integer(), 0);
+
+  response = CreateFromParts({"GETBIT", "str:bitmap", "15"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsInteger());
+  EXPECT_EQ(response.reply.integer(), 1);
+
+  response = CreateFromParts({"BITCOUNT", "str:bitmap"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsInteger());
+  EXPECT_EQ(response.reply.integer(), 1);
+
+  response = CreateFromParts({"GET", "str:bitmap"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsBulkString());
+  ASSERT_EQ(response.reply.string().size(), 2U);
+  EXPECT_EQ(response.reply.string()[0], '\0');
+  EXPECT_EQ(static_cast<unsigned char>(response.reply.string()[1]), 0x01U);
+
+  response = CreateFromParts({"STRLEN", "str:bitmap"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsInteger());
+  EXPECT_EQ(response.reply.integer(), 2);
+
+  response = CreateFromParts({"SETBIT", "str:bitmap", "15", "1"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsInteger());
+  EXPECT_EQ(response.reply.integer(), 1);
+
+  response = CreateFromParts({"SET", "str:bitmap", "A"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsSimpleString());
+  EXPECT_EQ(response.reply.string(), "OK");
+
+  response = CreateFromParts({"GETBIT", "str:bitmap", "1"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsInteger());
+  EXPECT_EQ(response.reply.integer(), 1);
+
+  response = CreateFromParts({"BITCOUNT", "str:bitmap"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsInteger());
+  EXPECT_EQ(response.reply.integer(), 2);
+}
+
 TEST_F(ModuleRuntimeTest, HDelExecuteRemovesFields) {
   ASSERT_TRUE(hash_module_->PutField("user:3", "a", "1", nullptr).ok());
   ASSERT_TRUE(hash_module_->PutField("user:3", "b", "2", nullptr).ok());
@@ -1926,6 +2060,16 @@ TEST_F(ModuleRuntimeTest, StringCommandsOnMissingKeyReturnEmptySuccess) {
   ASSERT_TRUE(response.status.ok());
   ASSERT_TRUE(response.reply.IsInteger());
   EXPECT_EQ(response.reply.integer(), 0);
+
+  response = CreateFromParts({"GETBIT", "missing-string", "9"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsInteger());
+  EXPECT_EQ(response.reply.integer(), 0);
+
+  response = CreateFromParts({"BITCOUNT", "missing-string"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsInteger());
+  EXPECT_EQ(response.reply.integer(), 0);
 }
 
 TEST_F(ModuleRuntimeTest, ListCommandsOnMissingKeyReturnEmptySuccess) {
@@ -2013,12 +2157,32 @@ TEST_F(ModuleRuntimeTest, TypeDelAndExpireExecuteAgainstStringKeys) {
   ASSERT_TRUE(response.reply.IsSimpleString());
   EXPECT_EQ(response.reply.string(), "OK");
 
+  response = CreateFromParts({"SETBIT", "str:lifecycle", "15", "1"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsInteger());
+  EXPECT_EQ(response.reply.integer(), 0);
+
+  response = CreateFromParts({"BITCOUNT", "str:lifecycle"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsInteger());
+  EXPECT_EQ(response.reply.integer(), 21);
+
   response = CreateFromParts({"DEL", "str:lifecycle"})->Execute();
   ASSERT_TRUE(response.status.ok());
   ASSERT_TRUE(response.reply.IsInteger());
   EXPECT_EQ(response.reply.integer(), 1);
 
   response = CreateFromParts({"EXISTS", "str:lifecycle"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsInteger());
+  EXPECT_EQ(response.reply.integer(), 0);
+
+  response = CreateFromParts({"GETBIT", "str:lifecycle", "15"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsInteger());
+  EXPECT_EQ(response.reply.integer(), 0);
+
+  response = CreateFromParts({"BITCOUNT", "str:lifecycle"})->Execute();
   ASSERT_TRUE(response.status.ok());
   ASSERT_TRUE(response.reply.IsInteger());
   EXPECT_EQ(response.reply.integer(), 0);
@@ -2143,6 +2307,22 @@ TEST_F(ModuleRuntimeTest, StringCommandsRejectWrongTypeKeys) {
             std::string::npos);
 
   response = CreateFromParts({"STRLEN", "user:string-wrong"})->Execute();
+  ASSERT_TRUE(response.status.IsInvalidArgument());
+  EXPECT_NE(response.status.ToString().find("key type mismatch"),
+            std::string::npos);
+
+  response = CreateFromParts({"GETBIT", "user:string-wrong", "0"})->Execute();
+  ASSERT_TRUE(response.status.IsInvalidArgument());
+  EXPECT_NE(response.status.ToString().find("key type mismatch"),
+            std::string::npos);
+
+  response =
+      CreateFromParts({"SETBIT", "user:string-wrong", "0", "1"})->Execute();
+  ASSERT_TRUE(response.status.IsInvalidArgument());
+  EXPECT_NE(response.status.ToString().find("key type mismatch"),
+            std::string::npos);
+
+  response = CreateFromParts({"BITCOUNT", "user:string-wrong"})->Execute();
   ASSERT_TRUE(response.status.IsInvalidArgument());
   EXPECT_NE(response.status.ToString().find("key type mismatch"),
             std::string::npos);

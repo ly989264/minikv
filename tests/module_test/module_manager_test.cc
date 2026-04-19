@@ -6,6 +6,7 @@
 #include "gtest/gtest.h"
 #include "execution/scheduler/scheduler.h"
 #include "runtime/module/module_manager.h"
+#include "types/bitmap/bitmap_module.h"
 #include "core/core_module.h"
 #include "types/hash/hash_module.h"
 #include "types/list/list_module.h"
@@ -157,6 +158,7 @@ TEST(ModuleManagerTest, BuiltinModulesLoadIntoUnifiedRegistry) {
   std::vector<std::unique_ptr<minikv::Module>> modules;
   modules.push_back(std::make_unique<minikv::CoreModule>());
   modules.push_back(std::make_unique<minikv::StringModule>());
+  modules.push_back(std::make_unique<minikv::BitmapModule>());
   modules.push_back(std::make_unique<minikv::HashModule>());
   modules.push_back(std::make_unique<minikv::ListModule>());
   modules.push_back(std::make_unique<minikv::SetModule>());
@@ -181,6 +183,12 @@ TEST(ModuleManagerTest, BuiltinModulesLoadIntoUnifiedRegistry) {
   const minikv::CmdRegistration* get = manager.command_registry().Find("GET");
   const minikv::CmdRegistration* strlen =
       manager.command_registry().Find("STRLEN");
+  const minikv::CmdRegistration* getbit =
+      manager.command_registry().Find("GETBIT");
+  const minikv::CmdRegistration* setbit =
+      manager.command_registry().Find("SETBIT");
+  const minikv::CmdRegistration* bitcount =
+      manager.command_registry().Find("BITCOUNT");
   const minikv::CmdRegistration* lpush =
       manager.command_registry().Find("LPUSH");
   const minikv::CmdRegistration* lpop = manager.command_registry().Find("LPOP");
@@ -256,6 +264,9 @@ TEST(ModuleManagerTest, BuiltinModulesLoadIntoUnifiedRegistry) {
   ASSERT_NE(set, nullptr);
   ASSERT_NE(get, nullptr);
   ASSERT_NE(strlen, nullptr);
+  ASSERT_NE(getbit, nullptr);
+  ASSERT_NE(setbit, nullptr);
+  ASSERT_NE(bitcount, nullptr);
   ASSERT_NE(lpush, nullptr);
   ASSERT_NE(lpop, nullptr);
   ASSERT_NE(lrange, nullptr);
@@ -304,6 +315,9 @@ TEST(ModuleManagerTest, BuiltinModulesLoadIntoUnifiedRegistry) {
   EXPECT_EQ(set->owner_module, "string");
   EXPECT_EQ(get->owner_module, "string");
   EXPECT_EQ(strlen->owner_module, "string");
+  EXPECT_EQ(getbit->owner_module, "bitmap");
+  EXPECT_EQ(setbit->owner_module, "bitmap");
+  EXPECT_EQ(bitcount->owner_module, "bitmap");
   EXPECT_EQ(lpush->owner_module, "list");
   EXPECT_EQ(lpop->owner_module, "list");
   EXPECT_EQ(lrange->owner_module, "list");

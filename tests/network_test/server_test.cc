@@ -839,6 +839,69 @@ TEST_F(MiniKVServerTest, StringLifecycleCommandsWorkOverNetwork) {
   close(fd);
 }
 
+TEST_F(MiniKVServerTest, BitmapCommandsShareStringBytesOverNetwork) {
+  const int fd = ConnectToServer(server_->port());
+
+  WriteAll(fd, EncodeCommand({"SETBIT", "str:bitmap", "15", "1"}));
+  RespValue reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kInteger);
+  ASSERT_EQ(reply.integer, 0);
+
+  WriteAll(fd, EncodeCommand({"GETBIT", "str:bitmap", "15"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kInteger);
+  ASSERT_EQ(reply.integer, 1);
+
+  WriteAll(fd, EncodeCommand({"BITCOUNT", "str:bitmap"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kInteger);
+  ASSERT_EQ(reply.integer, 1);
+
+  WriteAll(fd, EncodeCommand({"STRLEN", "str:bitmap"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kInteger);
+  ASSERT_EQ(reply.integer, 2);
+
+  WriteAll(fd, EncodeCommand({"GET", "str:bitmap"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kBulkString);
+  ASSERT_EQ(reply.text.size(), 2U);
+  EXPECT_EQ(reply.text[0], '\0');
+  EXPECT_EQ(static_cast<unsigned char>(reply.text[1]), 0x01U);
+
+  WriteAll(fd, EncodeCommand({"SET", "str:bitmap", "A"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kSimpleString);
+  ASSERT_EQ(reply.text, "OK");
+
+  WriteAll(fd, EncodeCommand({"GETBIT", "str:bitmap", "1"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kInteger);
+  ASSERT_EQ(reply.integer, 1);
+
+  WriteAll(fd, EncodeCommand({"BITCOUNT", "str:bitmap"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kInteger);
+  ASSERT_EQ(reply.integer, 2);
+
+  WriteAll(fd, EncodeCommand({"EXPIRE", "str:bitmap", "0"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kInteger);
+  ASSERT_EQ(reply.integer, 1);
+
+  WriteAll(fd, EncodeCommand({"GETBIT", "str:bitmap", "15"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kInteger);
+  ASSERT_EQ(reply.integer, 0);
+
+  WriteAll(fd, EncodeCommand({"BITCOUNT", "str:bitmap"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kInteger);
+  ASSERT_EQ(reply.integer, 0);
+
+  close(fd);
+}
+
 TEST_F(MiniKVServerTest, ListLifecycleCommandsWorkOverNetwork) {
   const int fd = ConnectToServer(server_->port());
 

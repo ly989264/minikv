@@ -43,6 +43,7 @@ The baseline test matrix is:
 - `minikv_hash_module_test`
 - `minikv_list_module_test`
 - `minikv_string_module_test`
+- `minikv_bitmap_module_test`
 - `minikv_set_module_test`
 - `minikv_stream_module_test`
 - `minikv_zset_module_test`

@@ -44,12 +44,13 @@ Current builtin load order is:
 
 1. `CoreModule`
 2. `StringModule`
-3. `HashModule`
-4. `ListModule`
-5. `SetModule`
-6. `ZSetModule`
-7. `GeoModule`
-8. `StreamModule`
+3. `BitmapModule`
+4. `HashModule`
+5. `ListModule`
+6. `SetModule`
+7. `ZSetModule`
+8. `GeoModule`
+9. `StreamModule`
 
 ## Startup Windows
 

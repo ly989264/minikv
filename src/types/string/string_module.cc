@@ -154,7 +154,13 @@ class StrlenCmd : public Cmd {
 rocksdb::Status StringModule::OnLoad(ModuleServices& services) {
   services_ = &services;
 
-  rocksdb::Status status = services.command_registry().Register(
+  rocksdb::Status status = services.exports().Publish<StringBridge>(
+      kStringBridgeExportName, static_cast<StringBridge*>(this));
+  if (!status.ok()) {
+    return status;
+  }
+
+  status = services.command_registry().Register(
       {"SET", CmdFlags::kWrite | CmdFlags::kFast, CommandSource::kBuiltin, "",
        [this](const CmdRegistration& registration) {
          return std::make_unique<SetCmd>(registration, this);

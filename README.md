@@ -10,6 +10,7 @@ Current builtin modules:
 - `CoreModule`: `PING`, `TYPE`, `EXISTS`, `DEL`, `EXPIRE`, `TTL`, `PTTL`,
   `PERSIST`
 - `StringModule`: `SET`, `GET`, `STRLEN`
+- `BitmapModule`: `GETBIT`, `SETBIT`, `BITCOUNT`
 - `HashModule`: `HSET`, `HGETALL`, `HDEL`
 - `ListModule`: `LPUSH`, `LPOP`, `LRANGE`, `RPUSH`, `RPOP`, `LREM`, `LTRIM`,
   `LLEN`
@@ -88,7 +89,9 @@ from the metadata recorded in `third_party/rocksdb/linux-x86_64/BUNDLE_INFO.env`
 - `src/runtime/module/`: builtin module SPI, lifecycle manager, exports, and
   module services
 - `src/core/`: protocol-level builtin commands and key lifecycle services
-- `src/types/string/`: string commands and string storage semantics
+- `src/types/string/`: string commands, string storage semantics, and the
+  exported string bridge
+- `src/types/bitmap/`: bitmap commands layered on shared string storage
 - `src/types/hash/`: hash commands, hash storage semantics, and observer bridge
 - `src/types/list/`: list commands and list storage semantics
 - `src/types/set/`: set commands and set storage semantics
