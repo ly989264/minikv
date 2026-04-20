@@ -77,6 +77,7 @@ set(MINIKV_INTERNAL_HEADERS
   src/types/json/json_path.h
   src/types/list/list_module.h
   src/types/string/string_bridge.h
+  src/types/string/string_commands.h
   src/types/string/string_module.h
   src/types/set/set_module.h
   src/types/geo/geo_module.h
@@ -108,6 +109,7 @@ set(MINIKV_SOURCES
   src/types/json/json_module.cc
   src/types/json/json_path.cc
   src/types/list/list_module.cc
+  src/types/string/string_commands.cc
   src/types/string/string_module.cc
   src/types/set/set_module.cc
   src/types/geo/geo_module.cc
