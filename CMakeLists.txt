@@ -87,6 +87,8 @@ set(MINIKV_INTERNAL_HEADERS
   src/types/set/set_commands.h
   src/types/set/set_internal.h
   src/types/set/set_module.h
+  src/types/geo/geo_commands.h
+  src/types/geo/geo_internal.h
   src/types/geo/geo_module.h
   src/types/stream/stream_common.h
   src/types/stream/stream_commands.h
@@ -129,6 +131,8 @@ set(MINIKV_SOURCES
   src/types/set/set_commands.cc
   src/types/set/set_internal.cc
   src/types/set/set_module.cc
+  src/types/geo/geo_commands.cc
+  src/types/geo/geo_internal.cc
   src/types/geo/geo_module.cc
   src/types/stream/stream_common.cc
   src/types/stream/stream_commands.cc
