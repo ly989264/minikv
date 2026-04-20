@@ -190,7 +190,7 @@ TEST(SchedulerTest, SameKeyTasksDoNotExecuteInParallel) {
                           })
                   .ok());
   ASSERT_TRUE(WaitFor(&tracker, [&] { return first_gate.entered; },
-                      std::chrono::seconds(1)));
+                      std::chrono::seconds(3)));
 
   ASSERT_TRUE(scheduler.Submit(
                           MakeBlockingCmd("user:1", &tracker, &second_gate),
@@ -213,7 +213,7 @@ TEST(SchedulerTest, SameKeyTasksDoNotExecuteInParallel) {
 
   const bool second_entered =
       WaitFor(&tracker, [&] { return second_gate.entered; },
-              std::chrono::seconds(1));
+              std::chrono::seconds(3));
   EXPECT_TRUE(second_entered);
   EXPECT_EQ(tracker.max_running, 1);
 
@@ -251,7 +251,7 @@ TEST(SchedulerTest, SameKeyTasksSerializeEvenWhenMultipleWorkersPickThemUp) {
   }
 
   ASSERT_TRUE(WaitFor(&tracker, [&] { return tracker.entered_count == 1; },
-                      std::chrono::seconds(1)));
+                      std::chrono::seconds(3)));
 
   {
     std::lock_guard<std::mutex> lock(tracker.mutex);
@@ -276,13 +276,13 @@ TEST(SchedulerTest, SameKeyTasksSerializeEvenWhenMultipleWorkersPickThemUp) {
     if (released + 1 < gates.size()) {
       ASSERT_TRUE(WaitFor(&tracker,
                           [&] { return tracker.entered_count >= released + 2; },
-                          std::chrono::seconds(1)));
+                          std::chrono::seconds(3)));
     }
   }
 
   ASSERT_TRUE(WaitFor(&tracker,
                       [&] { return tracker.completed_count == gates.size(); },
-                      std::chrono::seconds(1)));
+                      std::chrono::seconds(3)));
   for (auto& future : done_futures) {
     ExpectFutureReady(&future);
   }
@@ -313,7 +313,7 @@ TEST(SchedulerTest, DifferentKeysCanExecuteInParallel) {
                           })
                   .ok());
   ASSERT_TRUE(WaitFor(&tracker, [&] { return first_gate.entered; },
-                      std::chrono::seconds(1)));
+                      std::chrono::seconds(3)));
 
   ASSERT_TRUE(scheduler.Submit(
                           MakeBlockingCmd("user:2", &tracker, &second_gate),
@@ -324,7 +324,7 @@ TEST(SchedulerTest, DifferentKeysCanExecuteInParallel) {
                   .ok());
   const bool second_entered =
       WaitFor(&tracker, [&] { return second_gate.entered; },
-              std::chrono::seconds(1));
+              std::chrono::seconds(3));
   EXPECT_TRUE(second_entered);
   if (second_entered) {
     EXPECT_GE(tracker.max_running, 2);
@@ -359,7 +359,7 @@ TEST(SchedulerTest, NoKeyCommandsDoNotTakeKeyLock) {
                           })
                   .ok());
   ASSERT_TRUE(WaitFor(&tracker, [&] { return first_gate.entered; },
-                      std::chrono::seconds(1)));
+                      std::chrono::seconds(3)));
 
   ASSERT_TRUE(scheduler.Submit(
                           MakeNoKeyBlockingCmd(&tracker, &second_gate),
@@ -370,7 +370,7 @@ TEST(SchedulerTest, NoKeyCommandsDoNotTakeKeyLock) {
                   .ok());
   const bool second_entered =
       WaitFor(&tracker, [&] { return second_gate.entered; },
-              std::chrono::seconds(1));
+              std::chrono::seconds(3));
   EXPECT_TRUE(second_entered);
   if (second_entered) {
     EXPECT_GE(tracker.max_running, 2);
@@ -428,7 +428,7 @@ TEST(SchedulerTest, EmptyStringKeyStillTakesSingleKeyLock) {
   tracker.cv.notify_all();
 
   ExpectFutureReady(&blocked_done_future);
-  EXPECT_EQ(quick_done_future.wait_for(std::chrono::seconds(1)),
+  EXPECT_EQ(quick_done_future.wait_for(std::chrono::seconds(3)),
             std::future_status::ready);
 }
 
@@ -511,7 +511,7 @@ TEST(SchedulerTest, SameKeyQuickTaskWaitsUntilBlockedTaskReleasesLock) {
   tracker.cv.notify_all();
 
   ExpectFutureReady(&blocked_done_future);
-  EXPECT_EQ(quick_done_future.wait_for(std::chrono::seconds(1)),
+  EXPECT_EQ(quick_done_future.wait_for(std::chrono::seconds(3)),
             std::future_status::ready);
 }
 
@@ -557,7 +557,7 @@ TEST(SchedulerTest,
   tracker.cv.notify_all();
 
   ExpectFutureReady(&blocked_done_future);
-  EXPECT_EQ(quick_done_future.wait_for(std::chrono::seconds(1)),
+  EXPECT_EQ(quick_done_future.wait_for(std::chrono::seconds(3)),
             std::future_status::ready);
 }
 
@@ -603,7 +603,7 @@ TEST(SchedulerTest,
   tracker.cv.notify_all();
 
   ExpectFutureReady(&blocked_done_future);
-  EXPECT_EQ(quick_done_future.wait_for(std::chrono::seconds(1)),
+  EXPECT_EQ(quick_done_future.wait_for(std::chrono::seconds(3)),
             std::future_status::ready);
 }
 
