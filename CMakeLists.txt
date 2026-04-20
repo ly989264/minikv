@@ -68,6 +68,7 @@ set(MINIKV_INTERNAL_HEADERS
   src/core/core_module.h
   src/core/key_service.h
   src/core/whole_key_delete_handler.h
+  src/types/bitmap/bitmap_commands.h
   src/types/bitmap/bitmap_module.h
   src/types/hash/hash_indexing_bridge.h
   src/types/hash/hash_module.h
@@ -104,6 +105,7 @@ set(MINIKV_SOURCES
   src/runtime/module/module_services.cc
   src/core/core_module.cc
   src/core/key_service.cc
+  src/types/bitmap/bitmap_commands.cc
   src/types/bitmap/bitmap_module.cc
   src/types/hash/hash_module.cc
   src/types/json/json_module.cc
