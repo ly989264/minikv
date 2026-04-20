@@ -75,6 +75,8 @@ set(MINIKV_INTERNAL_HEADERS
   src/types/hash/hash_module.h
   src/types/hash/hash_observer.h
   src/types/hash/hash_types.h
+  src/types/json/json_commands.h
+  src/types/json/json_document_utils.h
   src/types/json/json_module.h
   src/types/json/json_path.h
   src/types/list/list_commands.h
@@ -114,6 +116,8 @@ set(MINIKV_SOURCES
   src/types/bitmap/bitmap_module.cc
   src/types/hash/hash_commands.cc
   src/types/hash/hash_module.cc
+  src/types/json/json_commands.cc
+  src/types/json/json_document_utils.cc
   src/types/json/json_module.cc
   src/types/json/json_path.cc
   src/types/list/list_commands.cc
