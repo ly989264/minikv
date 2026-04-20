@@ -84,7 +84,7 @@ std::string SerializeResolvedPath(const JsonResolvedPath& path) {
 
 bool IsZeroNumber(const minijson::Value& value) {
   return value.IsNumber() &&
-         std::fabsl(value.number().value) < 0.5e-18L;
+         std::fabs(value.number().value) < 0.5e-18L;
 }
 
 minijson::Value MakeJsonArray(const std::vector<minijson::Value>& values) {

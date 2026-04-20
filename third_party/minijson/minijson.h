@@ -218,7 +218,7 @@ inline std::string FormatNumber(long double value) {
   if (!std::isfinite(static_cast<double>(value))) {
     return std::string();
   }
-  if (std::fabsl(value) < 0.5e-18L) {
+  if (std::fabs(value) < 0.5e-18L) {
     return "0";
   }
 
