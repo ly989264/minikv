@@ -1,486 +1,19 @@
 #include "types/set/set_module.h"
 
 #include <algorithm>
-#include <cstring>
 #include <memory>
-#include <random>
-#include <unordered_set>
-#include <utility>
 #include <vector>
 
-#include "storage/encoding/key_codec.h"
-#include "execution/command/cmd.h"
+#include "types/set/set_commands.h"
+#include "types/set/set_internal.h"
 #include "runtime/module/module_services.h"
 #include "core/key_service.h"
 
 namespace minikv {
 
-namespace {
-
-void AppendUint32(std::string* out, uint32_t value) {
-  for (int shift = 24; shift >= 0; shift -= 8) {
-    out->push_back(static_cast<char>((value >> shift) & 0xff));
-  }
-}
-
-void AppendUint64(std::string* out, uint64_t value) {
-  for (int shift = 56; shift >= 0; shift -= 8) {
-    out->push_back(static_cast<char>((value >> shift) & 0xff));
-  }
-}
-
-std::string EncodeSetMemberPrefix(const std::string& key, uint64_t version) {
-  std::string out;
-  AppendUint32(&out, static_cast<uint32_t>(key.size()));
-  out.append(key);
-  AppendUint64(&out, version);
-  return out;
-}
-
-std::string EncodeSetMemberKey(const std::string& key, uint64_t version,
-                               const std::string& member) {
-  std::string out = EncodeSetMemberPrefix(key, version);
-  out.append(member);
-  return out;
-}
-
-bool ExtractMemberFromSetMemberKey(const rocksdb::Slice& encoded_key,
-                                   const rocksdb::Slice& prefix,
-                                   std::string* member) {
-  if (!KeyCodec::StartsWith(encoded_key, prefix)) {
-    return false;
-  }
-  if (member != nullptr) {
-    member->assign(encoded_key.data() + prefix.size(),
-                   encoded_key.size() - prefix.size());
-  }
-  return true;
-}
-
-rocksdb::Status RequireSetEncoding(const KeyLookup& lookup) {
-  if (!lookup.exists) {
-    return rocksdb::Status::OK();
-  }
-  if (lookup.metadata.type != ObjectType::kSet ||
-      lookup.metadata.encoding != ObjectEncoding::kSetHashtable) {
-    return rocksdb::Status::InvalidArgument("key type mismatch");
-  }
-  return rocksdb::Status::OK();
-}
-
-KeyMetadata BuildSetMetadata(const CoreKeyService* key_service,
-                             const KeyLookup& lookup) {
-  if (lookup.exists) {
-    return lookup.metadata;
-  }
-
-  KeyMetadata metadata =
-      key_service->MakeMetadata(ObjectType::kSet,
-                                ObjectEncoding::kSetHashtable, lookup);
-  metadata.size = 0;
-  return metadata;
-}
-
-KeyMetadata BuildSetTombstoneMetadata(const CoreKeyService* key_service,
-                                      const KeyLookup& lookup) {
-  KeyMetadata metadata = key_service->MakeTombstoneMetadata(lookup);
-  metadata.size = 0;
-  return metadata;
-}
-
-std::vector<std::string> DeduplicateMembers(
-    const std::vector<std::string>& members) {
-  std::vector<std::string> unique_members;
-  unique_members.reserve(members.size());
-
-  std::unordered_set<std::string> seen;
-  seen.reserve(members.size());
-  for (const auto& member : members) {
-    if (seen.insert(member).second) {
-      unique_members.push_back(member);
-    }
-  }
-  return unique_members;
-}
-
-rocksdb::Status CollectMembers(ModuleSnapshot* snapshot,
-                               const ModuleKeyspace& members_keyspace,
-                               const std::string& key, uint64_t version,
-                               std::vector<std::string>* out) {
-  if (snapshot == nullptr) {
-    return rocksdb::Status::InvalidArgument("module snapshot is unavailable");
-  }
-  if (out == nullptr) {
-    return rocksdb::Status::InvalidArgument("members output is required");
-  }
-
-  out->clear();
-  const std::string prefix = EncodeSetMemberPrefix(key, version);
-  return snapshot->ScanPrefix(
-      members_keyspace, prefix,
-      [out, &prefix](const rocksdb::Slice& encoded_key,
-                     const rocksdb::Slice& /*value_slice*/) {
-        std::string member;
-        if (!ExtractMemberFromSetMemberKey(encoded_key, prefix, &member)) {
-          return false;
-        }
-        out->push_back(std::move(member));
-        return true;
-      });
-}
-
-size_t SelectRandomIndex(size_t count) {
-  std::random_device device;
-  std::mt19937_64 generator(
-      (static_cast<uint64_t>(device()) << 32) ^ device());
-  std::uniform_int_distribution<size_t> distribution(0, count - 1);
-  return distribution(generator);
-}
-
-class SAddCmd : public Cmd {
- public:
-  SAddCmd(const CmdRegistration& registration, SetModule* module)
-      : Cmd(registration.name, registration.flags), module_(module) {}
-
- private:
-  rocksdb::Status DoInitial(const CmdInput& input) override {
-    if (!input.has_key) {
-      return rocksdb::Status::InvalidArgument("missing key");
-    }
-    if (input.args.empty()) {
-      return rocksdb::Status::InvalidArgument(
-          "SADD requires at least one member");
-    }
-    key_ = input.key;
-    members_ = input.args;
-    SetRouteKey(key_);
-    return rocksdb::Status::OK();
-  }
-
-  CommandResponse Do() override {
-    if (module_ == nullptr) {
-      return MakeStatus(
-          rocksdb::Status::InvalidArgument("set module is unavailable"));
-    }
-    uint64_t added = 0;
-    rocksdb::Status status = module_->AddMembers(key_, members_, &added);
-    if (!status.ok()) {
-      return MakeStatus(std::move(status));
-    }
-    return MakeInteger(static_cast<long long>(added));
-  }
-
-  SetModule* module_ = nullptr;
-  std::string key_;
-  std::vector<std::string> members_;
-};
-
-class SCardCmd : public Cmd {
- public:
-  SCardCmd(const CmdRegistration& registration, SetModule* module)
-      : Cmd(registration.name, registration.flags), module_(module) {}
-
- private:
-  rocksdb::Status DoInitial(const CmdInput& input) override {
-    if (!input.has_key) {
-      return rocksdb::Status::InvalidArgument("missing key");
-    }
-    if (!input.args.empty()) {
-      return rocksdb::Status::InvalidArgument(
-          "SCARD takes no extra arguments");
-    }
-    key_ = input.key;
-    SetRouteKey(key_);
-    return rocksdb::Status::OK();
-  }
-
-  CommandResponse Do() override {
-    if (module_ == nullptr) {
-      return MakeStatus(
-          rocksdb::Status::InvalidArgument("set module is unavailable"));
-    }
-    uint64_t size = 0;
-    rocksdb::Status status = module_->Cardinality(key_, &size);
-    if (!status.ok()) {
-      return MakeStatus(std::move(status));
-    }
-    return MakeInteger(static_cast<long long>(size));
-  }
-
-  SetModule* module_ = nullptr;
-  std::string key_;
-};
-
-class SMembersCmd : public Cmd {
- public:
-  SMembersCmd(const CmdRegistration& registration, SetModule* module)
-      : Cmd(registration.name, registration.flags), module_(module) {}
-
- private:
-  rocksdb::Status DoInitial(const CmdInput& input) override {
-    if (!input.has_key) {
-      return rocksdb::Status::InvalidArgument("missing key");
-    }
-    if (!input.args.empty()) {
-      return rocksdb::Status::InvalidArgument(
-          "SMEMBERS takes no extra arguments");
-    }
-    key_ = input.key;
-    SetRouteKey(key_);
-    return rocksdb::Status::OK();
-  }
-
-  CommandResponse Do() override {
-    if (module_ == nullptr) {
-      return MakeStatus(
-          rocksdb::Status::InvalidArgument("set module is unavailable"));
-    }
-    std::vector<std::string> members;
-    rocksdb::Status status = module_->ReadMembers(key_, &members);
-    if (!status.ok()) {
-      return MakeStatus(std::move(status));
-    }
-    return MakeArray(std::move(members));
-  }
-
-  SetModule* module_ = nullptr;
-  std::string key_;
-};
-
-class SIsMemberCmd : public Cmd {
- public:
-  SIsMemberCmd(const CmdRegistration& registration, SetModule* module)
-      : Cmd(registration.name, registration.flags), module_(module) {}
-
- private:
-  rocksdb::Status DoInitial(const CmdInput& input) override {
-    if (!input.has_key) {
-      return rocksdb::Status::InvalidArgument("missing key");
-    }
-    if (input.args.size() != 1) {
-      return rocksdb::Status::InvalidArgument("SISMEMBER requires member");
-    }
-    key_ = input.key;
-    member_ = input.args[0];
-    SetRouteKey(key_);
-    return rocksdb::Status::OK();
-  }
-
-  CommandResponse Do() override {
-    if (module_ == nullptr) {
-      return MakeStatus(
-          rocksdb::Status::InvalidArgument("set module is unavailable"));
-    }
-    bool found = false;
-    rocksdb::Status status = module_->IsMember(key_, member_, &found);
-    if (!status.ok()) {
-      return MakeStatus(std::move(status));
-    }
-    return MakeInteger(found ? 1 : 0);
-  }
-
-  SetModule* module_ = nullptr;
-  std::string key_;
-  std::string member_;
-};
-
-class SPopCmd : public Cmd {
- public:
-  SPopCmd(const CmdRegistration& registration, SetModule* module)
-      : Cmd(registration.name, registration.flags), module_(module) {}
-
- private:
-  rocksdb::Status DoInitial(const CmdInput& input) override {
-    if (!input.has_key) {
-      return rocksdb::Status::InvalidArgument("missing key");
-    }
-    if (!input.args.empty()) {
-      return rocksdb::Status::InvalidArgument(
-          "SPOP takes no extra arguments");
-    }
-    key_ = input.key;
-    SetRouteKey(key_);
-    return rocksdb::Status::OK();
-  }
-
-  CommandResponse Do() override {
-    if (module_ == nullptr) {
-      return MakeStatus(
-          rocksdb::Status::InvalidArgument("set module is unavailable"));
-    }
-    std::string member;
-    bool found = false;
-    rocksdb::Status status = module_->PopRandomMember(key_, &member, &found);
-    if (!status.ok()) {
-      return MakeStatus(std::move(status));
-    }
-    if (!found) {
-      return MakeNull();
-    }
-    return MakeBulkString(std::move(member));
-  }
-
-  SetModule* module_ = nullptr;
-  std::string key_;
-};
-
-class SRandMemberCmd : public Cmd {
- public:
-  SRandMemberCmd(const CmdRegistration& registration, SetModule* module)
-      : Cmd(registration.name, registration.flags), module_(module) {}
-
- private:
-  rocksdb::Status DoInitial(const CmdInput& input) override {
-    if (!input.has_key) {
-      return rocksdb::Status::InvalidArgument("missing key");
-    }
-    if (!input.args.empty()) {
-      return rocksdb::Status::InvalidArgument(
-          "SRANDMEMBER takes no extra arguments");
-    }
-    key_ = input.key;
-    SetRouteKey(key_);
-    return rocksdb::Status::OK();
-  }
-
-  CommandResponse Do() override {
-    if (module_ == nullptr) {
-      return MakeStatus(
-          rocksdb::Status::InvalidArgument("set module is unavailable"));
-    }
-    std::string member;
-    bool found = false;
-    rocksdb::Status status = module_->RandomMember(key_, &member, &found);
-    if (!status.ok()) {
-      return MakeStatus(std::move(status));
-    }
-    if (!found) {
-      return MakeNull();
-    }
-    return MakeBulkString(std::move(member));
-  }
-
-  SetModule* module_ = nullptr;
-  std::string key_;
-};
-
-class SRemCmd : public Cmd {
- public:
-  SRemCmd(const CmdRegistration& registration, SetModule* module)
-      : Cmd(registration.name, registration.flags), module_(module) {}
-
- private:
-  rocksdb::Status DoInitial(const CmdInput& input) override {
-    if (!input.has_key) {
-      return rocksdb::Status::InvalidArgument("missing key");
-    }
-    if (input.args.empty()) {
-      return rocksdb::Status::InvalidArgument(
-          "SREM requires at least one member");
-    }
-    key_ = input.key;
-    members_ = input.args;
-    SetRouteKey(key_);
-    return rocksdb::Status::OK();
-  }
-
-  CommandResponse Do() override {
-    if (module_ == nullptr) {
-      return MakeStatus(
-          rocksdb::Status::InvalidArgument("set module is unavailable"));
-    }
-    uint64_t removed = 0;
-    rocksdb::Status status = module_->RemoveMembers(key_, members_, &removed);
-    if (!status.ok()) {
-      return MakeStatus(std::move(status));
-    }
-    return MakeInteger(static_cast<long long>(removed));
-  }
-
-  SetModule* module_ = nullptr;
-  std::string key_;
-  std::vector<std::string> members_;
-};
-
-}  // namespace
-
 rocksdb::Status SetModule::OnLoad(ModuleServices& services) {
   services_ = &services;
-
-  rocksdb::Status status = services.command_registry().Register(
-      {"SADD", CmdFlags::kWrite | CmdFlags::kFast, CommandSource::kBuiltin, "",
-       [this](const CmdRegistration& registration) {
-         return std::make_unique<SAddCmd>(registration, this);
-       }});
-  if (!status.ok()) {
-    return status;
-  }
-  services.metrics().IncrementCounter("commands.registered");
-
-  status = services.command_registry().Register(
-      {"SCARD", CmdFlags::kRead | CmdFlags::kFast, CommandSource::kBuiltin, "",
-       [this](const CmdRegistration& registration) {
-         return std::make_unique<SCardCmd>(registration, this);
-       }});
-  if (!status.ok()) {
-    return status;
-  }
-  services.metrics().IncrementCounter("commands.registered");
-
-  status = services.command_registry().Register(
-      {"SMEMBERS", CmdFlags::kRead | CmdFlags::kSlow,
-       CommandSource::kBuiltin, "",
-       [this](const CmdRegistration& registration) {
-         return std::make_unique<SMembersCmd>(registration, this);
-       }});
-  if (!status.ok()) {
-    return status;
-  }
-  services.metrics().IncrementCounter("commands.registered");
-
-  status = services.command_registry().Register(
-      {"SISMEMBER", CmdFlags::kRead | CmdFlags::kFast,
-       CommandSource::kBuiltin, "",
-       [this](const CmdRegistration& registration) {
-         return std::make_unique<SIsMemberCmd>(registration, this);
-       }});
-  if (!status.ok()) {
-    return status;
-  }
-  services.metrics().IncrementCounter("commands.registered");
-
-  status = services.command_registry().Register(
-      {"SPOP", CmdFlags::kWrite | CmdFlags::kSlow, CommandSource::kBuiltin, "",
-       [this](const CmdRegistration& registration) {
-         return std::make_unique<SPopCmd>(registration, this);
-       }});
-  if (!status.ok()) {
-    return status;
-  }
-  services.metrics().IncrementCounter("commands.registered");
-
-  status = services.command_registry().Register(
-      {"SRANDMEMBER", CmdFlags::kRead | CmdFlags::kSlow,
-       CommandSource::kBuiltin, "",
-       [this](const CmdRegistration& registration) {
-         return std::make_unique<SRandMemberCmd>(registration, this);
-       }});
-  if (!status.ok()) {
-    return status;
-  }
-  services.metrics().IncrementCounter("commands.registered");
-
-  status = services.command_registry().Register(
-      {"SREM", CmdFlags::kWrite | CmdFlags::kSlow, CommandSource::kBuiltin, "",
-       [this](const CmdRegistration& registration) {
-         return std::make_unique<SRemCmd>(registration, this);
-       }});
-  if (!status.ok()) {
-    return status;
-  }
-  services.metrics().IncrementCounter("commands.registered");
-
-  return rocksdb::Status::OK();
+  return RegisterSetCommands(services, this);
 }
 
 rocksdb::Status SetModule::OnStart(ModuleServices& services) {
@@ -639,8 +172,8 @@ rocksdb::Status SetModule::ReadMembers(const std::string& key,
   }
 
   const ModuleKeyspace members_keyspace = services_->storage().Keyspace("members");
-  return CollectMembers(snapshot.get(), members_keyspace, key,
-                        lookup.metadata.version, out);
+  return CollectSetMembers(snapshot.get(), members_keyspace, key,
+                           lookup.metadata.version, out);
 }
 
 rocksdb::Status SetModule::IsMember(const std::string& key,
@@ -791,8 +324,8 @@ rocksdb::Status SetModule::RandomMember(const std::string& key,
 
   const ModuleKeyspace members_keyspace = services_->storage().Keyspace("members");
   std::vector<std::string> members;
-  status = CollectMembers(snapshot.get(), members_keyspace, key,
-                          lookup.metadata.version, &members);
+  status = CollectSetMembers(snapshot.get(), members_keyspace, key,
+                             lookup.metadata.version, &members);
   if (!status.ok()) {
     return status;
   }
@@ -837,8 +370,8 @@ rocksdb::Status SetModule::PopRandomMember(const std::string& key,
 
   const ModuleKeyspace members_keyspace = services_->storage().Keyspace("members");
   std::vector<std::string> members;
-  status = CollectMembers(snapshot.get(), members_keyspace, key,
-                          lookup.metadata.version, &members);
+  status = CollectSetMembers(snapshot.get(), members_keyspace, key,
+                             lookup.metadata.version, &members);
   if (!status.ok()) {
     return status;
   }
@@ -902,8 +435,8 @@ rocksdb::Status SetModule::DeleteWholeKey(ModuleSnapshot* snapshot,
 
   const ModuleKeyspace members_keyspace = services_->storage().Keyspace("members");
   std::vector<std::string> members;
-  status = CollectMembers(snapshot, members_keyspace, key, lookup.metadata.version,
-                          &members);
+  status = CollectSetMembers(snapshot, members_keyspace, key,
+                             lookup.metadata.version, &members);
   if (!status.ok()) {
     return status;
   }
