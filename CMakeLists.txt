@@ -86,6 +86,7 @@ set(MINIKV_INTERNAL_HEADERS
   src/types/geo/geo_module.h
   src/types/stream/stream_module.h
   src/types/zset/zset_bridge.h
+  src/types/zset/zset_commands.h
   src/types/zset/zset_module.h
   src/network/resp_parser.h
   src/execution/worker/key_lock_table.h
@@ -120,6 +121,7 @@ set(MINIKV_SOURCES
   src/types/set/set_module.cc
   src/types/geo/geo_module.cc
   src/types/stream/stream_module.cc
+  src/types/zset/zset_commands.cc
   src/types/zset/zset_module.cc
   src/network/network_server.cc
   src/network/resp_parser.cc
