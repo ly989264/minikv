@@ -1,9 +1,11 @@
 # Hash Builtin Module Integration
 
-`HashModule` is the first builtin data module in `minikv`.
+`HashModule` is the builtin hash data-type module in `minikv`.
 
 It lives under `src/types/hash/` and is loaded by `ModuleManager` during
-`MiniKV::Open()` after `CoreModule`.
+`MiniKV::Open()` after `CoreModule`, `StringModule`, and `BitmapModule`, before
+`JsonModule`, `ListModule`, `SetModule`, `ZSetModule`, `GeoModule`, and
+`StreamModule`.
 
 ## What It Owns
 

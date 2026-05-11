@@ -12,46 +12,38 @@ future behavior.
 
 ## Current Supported Commands
 
-The current command registry contains exactly eleven commands:
+The current command registry is populated by builtin modules during startup:
 
-- `PING`
-- `TYPE`
-- `EXISTS`
-- `DEL`
-- `EXPIRE`
-- `TTL`
-- `PTTL`
-- `PERSIST`
-- `HSET`
-- `HGETALL`
-- `HDEL`
+- `CoreModule`: `PING`, `TYPE`, `EXISTS`, `DEL`, `EXPIRE`, `TTL`, `PTTL`,
+  `PERSIST`
+- `StringModule`: `SET`, `GET`, `STRLEN`
+- `BitmapModule`: `GETBIT`, `SETBIT`, `BITCOUNT`
+- `HashModule`: `HSET`, `HGETALL`, `HDEL`
+- `JsonModule`: `JSON.SET`, `JSON.GET`, `JSON.MGET`, `JSON.DEL`,
+  `JSON.FORGET`, `JSON.TYPE`, `JSON.CLEAR`, `JSON.TOGGLE`,
+  `JSON.NUMINCRBY`
+- `ListModule`: `LPUSH`, `LPOP`, `LRANGE`, `RPUSH`, `RPOP`, `LREM`, `LTRIM`,
+  `LLEN`
+- `SetModule`: `SADD`, `SCARD`, `SMEMBERS`, `SISMEMBER`, `SPOP`,
+  `SRANDMEMBER`, `SREM`
+- `ZSetModule`: `ZADD`, `ZCARD`, `ZCOUNT`, `ZINCRBY`, `ZLEXCOUNT`, `ZRANGE`,
+  `ZRANGEBYLEX`, `ZRANGEBYSCORE`, `ZRANK`, `ZREM`, `ZSCORE`
+- `GeoModule`: `GEOADD`, `GEOPOS`, `GEOHASH`, `GEODIST`, `GEOSEARCH`
+- `StreamModule`: `XADD`, `XTRIM`, `XDEL`, `XLEN`, `XRANGE`, `XREVRANGE`,
+  `XREAD`
 
-Current command behavior:
+Current command behavior is intentionally Redis-like for the implemented subset:
 
-- `PING` takes no arguments and returns `PONG`
-- `TYPE key` returns the current logical type name or `none`
-- `EXISTS key [key ...]` counts the number of live keys and preserves duplicate
-  keys in the count
-- `DEL key [key ...]` deletes each live key at most once and returns the number
-  of deleted keys
-- `EXPIRE key seconds` sets a TTL on a live key and returns `1` on success, `0`
-  when the key is not live; zero or negative seconds route through whole-key
-  delete
-- `TTL key` returns `-2` for missing, expired, or tombstoned keys, `-1` for
-  live keys without TTL, or the remaining TTL in whole seconds
-- `PTTL key` returns the same state codes as `TTL`, but uses milliseconds for
-  positive TTL values
-- `PERSIST key` clears a live key's TTL and returns `1` on success, `0`
-  otherwise
-- `HSET key field value` stores one hash field and returns integer `1` when the
-  field is inserted, `0` when the field already exists and is overwritten
-- `HGETALL key` returns a flat RESP array of alternating field and value bulk
-  strings for the visible incarnation of the hash
-- `HDEL key field [field ...]` removes existing fields and returns the integer
-  count of removed fields
+- core lifecycle commands operate on live keys and treat expired or tombstoned
+  keys as missing
+- string and bitmap commands share the same underlying string byte storage
+- hash, json, list, set, zset, and stream commands maintain type-specific
+  storage semantics and reject wrong-type keys
+- geo commands use zset storage as the authoritative member/score source and
+  maintain geo sidecar state
 
-No other command names are registered in the shared runtime `CommandRegistry`
-loaded by `ModuleManager`.
+No `FT.*` search commands are registered in the shared runtime
+`CommandRegistry` loaded by `ModuleManager`.
 
 ## Current Thread Model
 
@@ -78,26 +70,18 @@ This means socket progress and command execution remain separated.
 
 ## Current Response Model
 
-`CommandResponse` currently maps builtin command results onto this active RESP
+`CommandResponse` currently maps builtin command results onto the active RESP
 surface:
 
 - simple string
 - integer
 - bulk string
-- array of bulk strings
+- array, including nested arrays
+- null
 - error
 
-Current command-to-response mapping:
-
-- `PING` -> simple string
-- `TYPE` -> bulk string
-- `EXISTS`, `DEL`, `EXPIRE`, `TTL`, `PTTL`, `PERSIST`, `HSET`, `HDEL` ->
-  integer
-- `HGETALL` -> flat array of bulk strings
-- command or execution failures -> RESP error
-
-The reply tree and encoder can also represent maps and nulls, but no current
-builtin command uses those reply shapes.
+The reply tree and encoder can also represent maps. `CommandResponse` is still
+close to RESP rather than being a transport-neutral domain result.
 
 ## Current Storage Model
 
@@ -109,29 +93,46 @@ The active kernel split is:
   reads
 - `ModuleWriteBatch`: one logical write batch per mutation
 - `CoreModule`: protocol-level builtin commands plus key lifecycle services
-- `HashModule`: hash semantics plus builtin command registration for hash
-  commands
+- builtin type modules: command registration, type-specific storage semantics,
+  and whole-key delete handling where applicable
 
 Builtin module scope today:
 
-- `CoreModule`: exports `CoreKeyService` and `WholeKeyDeleteRegistry`
-- `HashModule`: exports `HashIndexingBridge`
-- no external ABI or dynamic module loading
+- builtin modules are compiled into the binary and loaded by `ModuleManager`
+- current load order is `CoreModule`, `StringModule`, `BitmapModule`,
+  `HashModule`, `JsonModule`, `ListModule`, `SetModule`, `ZSetModule`,
+  `GeoModule`, then `StreamModule`
+- `CoreModule` exports `CoreKeyService` and `WholeKeyDeleteRegistry`
+- `StringModule` exports `string.bridge`
+- `HashModule` exports `HashIndexingBridge`
+- `ZSetModule` exports `zset.bridge`
+- no external ABI or dynamic module loading exists
 
-`StorageEngine` currently opens four RocksDB column families:
+`StorageEngine` currently opens these RocksDB column families:
 
 - `default`
 - `meta`
+- `string`
 - `hash`
+- `list`
+- `set`
+- `zset`
+- `stream`
+- `json`
+- `timeseries`
+- `vectorset`
 - `module`
 
-The logical model is still hash-only for user-visible data:
+The logical data model is:
 
 - the `meta` column family stores per-key metadata
-- the `hash` column family stores hash field/value entries
-- the `module` column family stores module-private keyspaces
-- the `default` column family is present because RocksDB requires it, but it is
-  not part of the active `minikv` data model
+- type-specific column families store string, hash, json, list, set, zset, and
+  stream entity data
+- bitmap commands operate on string storage rather than a bitmap-private column
+  family
+- geo commands use zset storage plus geo-owned sidecar state
+- the `module` column family stores auxiliary module-private keyspaces
+- the `default` column family is present because RocksDB requires it
 
 Current metadata fields are:
 
@@ -147,18 +148,19 @@ Current active lifecycle behavior:
 - expired keys are hidden from user commands
 - tombstoned keys are hidden from user commands
 - tombstones use the sentinel `expire_at_ms = 1`
-- recreating an expired or tombstoned hash bumps its version
+- recreating an expired or tombstoned typed value bumps its version where stale
+  type-specific rows must remain unreachable
 
 ## Current Non-Supported Items
 
 The following are explicitly not supported in the current baseline:
 
-- non-hash user-visible data types such as string, list, set, zset, or stream
 - external module loading, external ABI support, or third-party module-defined
   commands
 - search functionality, including any `FT.*` command family
 - transaction interfaces such as `MULTI`/`EXEC`
 - replication, clustering, or persistence modes beyond local RocksDB storage
+- public installed headers under `include/minikv/`
 
 ## Consequences
 

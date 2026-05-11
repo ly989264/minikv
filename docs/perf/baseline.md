@@ -47,14 +47,16 @@ The baseline test matrix is:
 - `minikv_bitmap_module_test`
 - `minikv_set_module_test`
 - `minikv_stream_module_test`
+- `minikv_geo_module_test`
 - `minikv_zset_module_test`
 - `minikv_hash_bridge_test`
+- `minikv_zset_bridge_test`
 - `minikv_hash_observer_test`
+- `minikv_module_manager_test`
 - `minikv_network_test`
 - `minikv_reply_encode_test`
 - `minikv_scheduler_test`
 - `minikv_snapshot_test`
-- `minikv_module_manager_test`
 
 All of these are expected to run through:
 
@@ -99,21 +101,16 @@ The smoke runner samples:
 - `HDEL`
 
 That is a deliberate subset. The broader command surface is still covered by
-the unit and integration tests:
-
-- `TYPE`
-- `EXISTS`
-- `DEL`
-- `EXPIRE`
-- `TTL`
-- `PTTL`
-- `PERSIST`
+the unit and integration tests for the core, string, bitmap, hash, json, list,
+set, zset, geo, and stream command families.
 
 ## Scope Boundary
 
 The current baseline applies to the current implementation surface:
 
-- supported user-visible data types: string, hash, list, set, zset, stream
+- supported user-visible data types: string, hash, json, list, set, zset, and
+  stream; bitmap commands share string storage and geo commands share zset
+  storage
 - supported server replies from builtin commands: simple string, integer, bulk
   string, flat array, nested array, null, and error
 - module SPI: builtin-only

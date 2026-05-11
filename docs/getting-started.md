@@ -253,7 +253,15 @@ Current column families:
 
 - `default`
 - `meta`
+- `string`
 - `hash`
+- `list`
+- `set`
+- `zset`
+- `stream`
+- `json`
+- `timeseries`
+- `vectorset`
 - `module`
 
 ### `src/storage/engine/snapshot.*` and `src/storage/engine/write_context.*`
