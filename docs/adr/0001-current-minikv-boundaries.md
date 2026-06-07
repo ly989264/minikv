@@ -47,13 +47,15 @@ No `FT.*` search commands are registered in the shared runtime
 
 ## Current Thread Model
 
-The current runtime is split into three thread roles:
+The current runtime is split into four thread roles:
 
 - one accept thread owns `accept()` on the listening socket
 - `io_threads` I/O threads own client sockets, parse RESP requests, buffer
   writes, and preserve per-connection response order
 - `worker_threads` worker threads execute commands through the shared
   `Scheduler`
+- one module background executor thread runs lightweight module-owned
+  maintenance work submitted through `ModuleBackgroundService`
 
 Execution routing rules today:
 

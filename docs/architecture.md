@@ -147,11 +147,16 @@ Important current boundaries:
 - commands register only during `OnLoad()`
 - typed module exports may publish during `OnLoad()` and `OnStart()`
 - `CoreModule` exports `CoreKeyService` and `WholeKeyDeleteRegistry`
-- `HashModule` exports `HashIndexingBridge` and registers itself as the
-  `WholeKeyDeleteHandler` for hash keys
-- `StreamModule` registers itself as the `WholeKeyDeleteHandler` for stream
-  keys and keeps its stream-private entry and state keyspaces in the dedicated
-  `stream` column family through `ModuleKeyspace`
+- `StringModule` exports `string.bridge` and registers as the whole-key delete
+  handler for string keys
+- `HashModule` exports `HashIndexingBridge` and registers as the whole-key
+  delete handler for hash keys
+- `ZSetModule` exports `zset.bridge`, registers as the whole-key delete handler
+  for zset keys, and notifies observers before commit
+- `GeoModule` consumes `zset.bridge`, observes zset mutations, and maintains
+  geo sidecar rows in zset-owned keyspaces
+- `JsonModule`, `ListModule`, `SetModule`, and `StreamModule` register as
+  whole-key delete handlers for their data types
 
 ## Storage Model
 
@@ -199,7 +204,9 @@ Those fields are active today:
 - `expire_at_ms = 1` is the logical delete tombstone sentinel
 - expired and tombstoned keys are treated as non-existent by user-visible
   lookup commands
-- recreating an expired or tombstoned hash bumps its metadata version
+- recreating an expired or tombstoned typed value bumps its metadata version;
+  versioned row layouts use that value to keep stale rows from earlier
+  incarnations unreachable
 
 ## Concurrency Model
 
@@ -214,13 +221,16 @@ The concurrency design is based on keyed serialization:
 Current lock-plan shapes:
 
 - `kNone`: `PING`
-- `kSingle`: most single-key commands such as `TYPE`, `EXPIRE`, `TTL`, `HSET`
-- `kMulti`: multi-key commands such as `EXISTS` and `DEL`
+- `kSingle`: most single-key commands such as `TYPE`, `EXPIRE`, `TTL`, `HSET`,
+  `JSON.GET`, `ZADD`, `GEOSEARCH`, and `XADD`
+- `kMulti`: multi-key commands such as `EXISTS`, `DEL`, `JSON.MGET`, and
+  `XREAD`
 
 Benefits of this model:
 
-- same-key updates avoid explicit coordination inside the hash module
-- multi-column-family reads use one snapshot inside a single command
+- same-key updates avoid explicit coordination inside individual type modules
+- logical module reads use command-local snapshots; multi-key commands hold
+  the relevant key locks while reading the protected keys
 - network progress is decoupled from RocksDB calls
 - different keys can execute in parallel across workers
 - same-connection response order is preserved by the network reorder buffer

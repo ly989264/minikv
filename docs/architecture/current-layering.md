@@ -22,8 +22,22 @@ The source layout is:
   dispatch
 - `src/execution/worker/`: worker threads and keyed lock serialization
 - `src/core/`: current core builtin commands and key lifecycle service
-- `src/types/hash/`: hash data-type module, bridge, observer contract, and hash
-  value types
+- `src/types/string/`: string data-type module, command registration, and
+  string bridge
+- `src/types/bitmap/`: bitmap command module layered on string storage
+- `src/types/hash/`: hash data-type module, command registration, bridge,
+  observer contract, and hash value types
+- `src/types/json/`: JSON data-type module, command registration, document
+  helpers, and path parsing
+- `src/types/list/`: list data-type module and command registration
+- `src/types/set/`: set data-type module, command registration, and member-key
+  helpers
+- `src/types/zset/`: sorted-set data-type module, command registration, and
+  zset bridge
+- `src/types/geo/`: geo command module, zset observer integration, and geo
+  sidecar helpers
+- `src/types/stream/`: stream data-type module, command registration, and
+  shared stream encoding helpers
 - `src/runtime/`: process configuration and the `MiniKV` runtime owner
 - `src/runtime/module/`: builtin module SPI, manager, services, exports, and
   background executor wiring
@@ -76,13 +90,79 @@ The source layout is:
 - `src/core/key_service.cc`
 - `src/core/whole_key_delete_handler.h`
 
-### Type Module
+### Type Modules
 
+String and bitmap:
+
+- `src/types/string/string_bridge.h`
+- `src/types/string/string_commands.h`
+- `src/types/string/string_commands.cc`
+- `src/types/string/string_module.h`
+- `src/types/string/string_module.cc`
+- `src/types/bitmap/bitmap_commands.h`
+- `src/types/bitmap/bitmap_commands.cc`
+- `src/types/bitmap/bitmap_module.h`
+- `src/types/bitmap/bitmap_module.cc`
+
+Hash:
+
+- `src/types/hash/hash_commands.h`
+- `src/types/hash/hash_commands.cc`
 - `src/types/hash/hash_module.h`
 - `src/types/hash/hash_module.cc`
 - `src/types/hash/hash_types.h`
 - `src/types/hash/hash_observer.h`
 - `src/types/hash/hash_indexing_bridge.h`
+
+JSON:
+
+- `src/types/json/json_commands.h`
+- `src/types/json/json_commands.cc`
+- `src/types/json/json_document_utils.h`
+- `src/types/json/json_document_utils.cc`
+- `src/types/json/json_module.h`
+- `src/types/json/json_module.cc`
+- `src/types/json/json_path.h`
+- `src/types/json/json_path.cc`
+
+List:
+
+- `src/types/list/list_commands.h`
+- `src/types/list/list_commands.cc`
+- `src/types/list/list_module.h`
+- `src/types/list/list_module.cc`
+
+Set:
+
+- `src/types/set/set_commands.h`
+- `src/types/set/set_commands.cc`
+- `src/types/set/set_internal.h`
+- `src/types/set/set_internal.cc`
+- `src/types/set/set_module.h`
+- `src/types/set/set_module.cc`
+
+Sorted set and geo:
+
+- `src/types/zset/zset_bridge.h`
+- `src/types/zset/zset_commands.h`
+- `src/types/zset/zset_commands.cc`
+- `src/types/zset/zset_module.h`
+- `src/types/zset/zset_module.cc`
+- `src/types/geo/geo_commands.h`
+- `src/types/geo/geo_commands.cc`
+- `src/types/geo/geo_internal.h`
+- `src/types/geo/geo_internal.cc`
+- `src/types/geo/geo_module.h`
+- `src/types/geo/geo_module.cc`
+
+Stream:
+
+- `src/types/stream/stream_commands.h`
+- `src/types/stream/stream_commands.cc`
+- `src/types/stream/stream_common.h`
+- `src/types/stream/stream_common.cc`
+- `src/types/stream/stream_module.h`
+- `src/types/stream/stream_module.cc`
 
 ### Runtime
 
@@ -120,11 +200,15 @@ cross-layer couplings still exist:
   `MetricsSnapshot`
 - `src/core/key_service.cc` owns metadata encoding and directly depends on
   `KeyCodec` plus module storage helpers
-- `src/types/hash/hash_module.*` depends on core lifecycle services and whole-
-  key delete registration
+- type modules depend on core lifecycle services for metadata lookup,
+  wrong-type checks, TTL/tombstone handling, and whole-key delete registration
+- `src/types/bitmap/bitmap_module.*` depends on the exported string bridge
+  rather than owning bitmap-private storage
 - `src/types/hash/hash_observer.h` exposes `KeyMetadata` in its mutation
   payload, which intentionally crosses the type-module and core-lifecycle
   boundary
+- `src/types/geo/geo_module.*` depends on the exported zset bridge and observes
+  zset mutations to maintain geo sidecar rows
 
 ## Public Header Note
 

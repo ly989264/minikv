@@ -65,7 +65,9 @@ Module export publication uses a slightly wider startup window:
 
 - `ModuleExportRegistry::Publish()` is allowed during `OnLoad()` and `OnStart()`
 - the current core exports publish during `CoreModule::OnLoad()`
+- the current string bridge publishes during `StringModule::OnLoad()`
 - the current hash bridge publishes during `HashModule::OnLoad()`
+- the current zset bridge publishes during `ZSetModule::OnLoad()`
 - consumer modules should normally resolve and bind exports during `OnStart()`
 
 Export lookup itself is not restricted to the startup window. Only publication

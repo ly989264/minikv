@@ -294,11 +294,12 @@ Important boundary:
 
 ## Thread Model
 
-The runtime currently has three kinds of threads:
+The runtime currently has four kinds of threads:
 
 - one accept thread
 - `io_threads` I/O threads
 - `worker_threads` worker threads owned by the shared scheduler
+- one module background executor thread
 
 ### When threads are created
 

@@ -51,7 +51,9 @@ Current lifecycle semantics tied to metadata:
 - `expire_at_ms = 0` means no TTL
 - `expire_at_ms = 1` means logical tombstone
 - expired and tombstoned keys are hidden from user-visible lookups
-- recreating an expired or tombstoned hash bumps its version
+- recreating an expired or tombstoned typed value bumps its metadata version;
+  versioned row layouts such as hash, list, set, zset, stream, and geo sidecar
+  storage use that version to keep stale rows unreachable
 
 Module keyspace layout used inside `ModuleKeyspace`-owned column families is:
 

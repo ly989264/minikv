@@ -160,20 +160,27 @@ Current helpers can build:
 - map
 - null
 
-Current builtin commands use:
+Current builtin commands use these shapes:
 
-- simple string: `PING`
-- bulk string: `TYPE`, `GET`, `LPOP`, `RPOP`, `SRANDMEMBER`, `SPOP`,
-  `ZINCRBY`, `ZSCORE`, `GEODIST`, `XADD`
+- simple string: `PING`, `SET`, applied `JSON.SET`, and `LTRIM`
+- bulk string: `TYPE`, `GET`, `JSON.GET`, single-result `JSON.TYPE`,
+  single-result `JSON.NUMINCRBY`, `LPOP`, `RPOP`, `SRANDMEMBER`, `SPOP`,
+  `ZINCRBY`, `ZSCORE`, `GEODIST`, and `XADD`
 - integer: `EXISTS`, `DEL`, `EXPIRE`, `TTL`, `PTTL`, `PERSIST`, `STRLEN`,
-  `GETBIT`, `SETBIT`, `BITCOUNT`, `HSET`, `HDEL`, `LLEN`, `LPUSH`, `RPUSH`,
-  `LREM`, `SADD`, `SCARD`, `SISMEMBER`, `SREM`, `ZADD`, `ZCARD`, `ZCOUNT`,
-  `ZLEXCOUNT`, `ZRANK`, `ZREM`, `GEOADD`, `XTRIM`, `XDEL`, `XLEN`
-- flat bulk-string array: `HGETALL`, `LRANGE`, `SMEMBERS`, `ZRANGE`,
-  `ZRANGEBYLEX`, `ZRANGEBYSCORE`
-- nested array: `GEOPOS`, `GEOSEARCH` with `WITH*`, `XRANGE`, `XREVRANGE`,
-  `XREAD`
-- null: missing-value reads such as `GET`, `LPOP`, and `RPOP`, plus `XREAD`
+  `GETBIT`, `SETBIT`, `BITCOUNT`, `HSET`, `HDEL`, JSON count commands,
+  single-result `JSON.TOGGLE`, `LLEN`, `LPUSH`, `RPUSH`, `LREM`, `SADD`,
+  `SCARD`, `SISMEMBER`, `SREM`, `ZADD`, `ZCARD`, `ZCOUNT`, `ZLEXCOUNT`,
+  `ZRANK`, `ZREM`, `GEOADD`, `XTRIM`, `XDEL`, and `XLEN`
+- flat bulk-string arrays or arrays of bulk/null/integer values: `HGETALL`,
+  `JSON.MGET`, JSONPath `JSON.TYPE`, JSONPath `JSON.TOGGLE`, `LRANGE`,
+  `SMEMBERS`, `GEOHASH`, `GEOSEARCH` without `WITH*`, `ZRANGE`,
+  `ZRANGEBYLEX`, and `ZRANGEBYSCORE`
+- nested arrays: `GEOPOS`, `GEOSEARCH` with `WITH*`, `XRANGE`, `XREVRANGE`,
+  and `XREAD`
+- null: missing-value reads such as `GET`, `JSON.GET`, `LPOP`, `RPOP`,
+  `SPOP`, `SRANDMEMBER`, `ZRANK`, `ZSCORE`, and `GEODIST`; `JSON.SET` when
+  `NX`/`XX` prevents a write; `JSON.TYPE`, `JSON.TOGGLE`, and
+  `JSON.NUMINCRBY` when the target is missing or incompatible; and `XREAD`
   when every requested stream has no newer entries
 
 ## Current Design Conclusion

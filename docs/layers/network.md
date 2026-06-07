@@ -75,7 +75,7 @@ Current reply encoder behavior:
 - `ReplyNode` supports simple string, error, integer, bulk string, array, map,
   and null
 - current commands only emit simple string, integer, bulk string, array, and
-  error replies
+  null replies on success, plus error replies for failures
 
 ## Limits And Shutdown
 

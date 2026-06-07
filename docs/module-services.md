@@ -49,7 +49,9 @@ Current rules:
 - providers publish during `OnLoad()` or `OnStart()`
 - the current core exports publish `core.key_service` and
   `core.whole_key_delete_registry`
+- the current string module publishes `string.bridge`
 - the current hash bridge publishes `hash.indexing_bridge`
+- the current zset module publishes `zset.bridge`
 - consumers usually resolve and bind exports during `OnStart()`
 - lookup is typed, so providers must publish the interface type they intend
   consumers to request
