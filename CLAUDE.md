@@ -23,6 +23,7 @@ Useful variants:
 ```bash
 ./tools/build_linux.sh --skip-tests
 ./tools/build_linux.sh --build-dir build --build-type Debug --jobs 8
+./tools/build_linux.sh --rocksdb-version 5.18.3
 python3 tools/export_compile_commands.py
 ```
 
@@ -58,6 +59,7 @@ If refreshing the committed RocksDB bundle from a local checkout:
 
 ```bash
 ./tools/build_linux.sh \
+  --rocksdb-version current \
   --rocksdb-source-dir /path/to/rocksdb \
   --rocksdb-reuse-build-dir /path/to/rocksdb/build-minikv
 ```

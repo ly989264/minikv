@@ -7,7 +7,7 @@ This directory is a standalone C++17 project rooted at `minikv/`. It is a small 
 - Authoritative compilation and validation must run in a Linux Docker container, not directly on the macOS host.
 - If the detected host system is macOS, first locate an existing Linux Docker container or start one for this workspace before running configure, build, or `ctest`.
 - Only discuss or attempt a macOS host build when the user explicitly asks to investigate host compatibility.
-- Inside the Linux container, prefer `./tools/build_linux.sh` and the committed RocksDB bundle under `third_party/rocksdb/linux-x86_64`.
+- Inside the Linux container, prefer `./tools/build_linux.sh` and the committed RocksDB bundles under `third_party/rocksdb/bundles/<version>/linux-x86_64`.
 - A known container mount path for this workspace is `/workspace/projects/OpenSource/minikv`; verify it exists before using it.
 
 ## Build Rules
@@ -27,8 +27,9 @@ This directory is a standalone C++17 project rooted at `minikv/`. It is a small 
 - Useful variants:
 
   ```bash
-  ./tools/build_linux.sh --skip-tests
-  ./tools/build_linux.sh --build-dir build --build-type Debug --jobs 8
+./tools/build_linux.sh --skip-tests
+./tools/build_linux.sh --build-dir build --build-type Debug --jobs 8
+./tools/build_linux.sh --rocksdb-version 5.18.3
   ```
 
 - Manual CMake workflow:
@@ -40,15 +41,17 @@ This directory is a standalone C++17 project rooted at `minikv/`. It is a small 
   ```
 
 - Default development flow should use the committed RocksDB bundle when it exists.
+- Use `./tools/build_linux.sh --rocksdb-version current|5.18.3` to select the RocksDB bundle at build time; the default is `current`.
 - If refreshing the committed RocksDB bundle from a local checkout, use the supported tool flow rather than editing bundled headers or libraries by hand:
 
   ```bash
   ./tools/build_linux.sh \
+    --rocksdb-version current \
     --rocksdb-source-dir /path/to/rocksdb \
     --rocksdb-reuse-build-dir /path/to/rocksdb/build-minikv
   ```
 
-- Commit refreshed bundle outputs together with `third_party/rocksdb/linux-x86_64/BUNDLE_INFO.env` when bundle contents change.
+- Commit refreshed bundle outputs together with the matching `third_party/rocksdb/bundles/<version>/linux-x86_64/BUNDLE_INFO.env` when bundle contents change.
 
 ## Validation Rules
 

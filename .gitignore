@@ -34,8 +34,11 @@ install_manifest.txt
 *.dll
 *.exe
 
-!third_party/rocksdb/linux-x86_64/lib/
-!third_party/rocksdb/linux-x86_64/lib/librocksdb.so
-!third_party/rocksdb/linux-x86_64/lib/librocksdb.so.*
+!third_party/rocksdb/bundles/
+!third_party/rocksdb/bundles/*/
+!third_party/rocksdb/bundles/*/linux-x86_64/
+!third_party/rocksdb/bundles/*/linux-x86_64/lib/
+!third_party/rocksdb/bundles/*/linux-x86_64/lib/librocksdb.so
+!third_party/rocksdb/bundles/*/linux-x86_64/lib/librocksdb.so.*
 
 *.log

@@ -1,5 +1,6 @@
 #include "types/geo/geo_module.h"
 
+#include <algorithm>
 #include <memory>
 #include <utility>
 #include <vector>

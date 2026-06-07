@@ -44,31 +44,36 @@ Default dependency mode prefers the committed RocksDB bundle and the vendored
 googletest tree plus the checked-in header-only JSON library:
 
 - `MINIKV_USE_BUNDLED_ROCKSDB=ON`
-- `MINIKV_ROCKSDB_BUNDLE_DIR=third_party/rocksdb/linux-x86_64`
+- `MINIKV_ROCKSDB_VERSION=current`
+- `MINIKV_ROCKSDB_BUNDLE_DIR=` by default, which resolves to
+  `third_party/rocksdb/bundles/<version>/linux-x86_64`
 - `MINIKV_FETCH_DEPS=OFF` when the bundle is complete
 - `MINIKV_GTEST_SOURCE_DIR=third_party/googletest`
 - `MINIKV_FETCH_GTEST=OFF` when the vendored googletest tree is present
 - `third_party/minijson/minijson.h` is always available locally and never
   fetched during configure
-- `MINIKV_ROCKSDB_TAG=v11.0.4` for `FetchContent` fallback only
+- `MINIKV_ROCKSDB_TAG=` by default; fallback tags are derived from
+  `MINIKV_ROCKSDB_VERSION`
 - `MINIKV_GTEST_TAG=v1.14.0` for `FetchContent` fallback only
 
 When the bundle is present, `minikv` links against the committed
-`third_party/rocksdb/linux-x86_64/lib/librocksdb.so` and uses the committed
-headers under `third_party/rocksdb/linux-x86_64/include/rocksdb`.
+`third_party/rocksdb/bundles/<version>/linux-x86_64/lib/librocksdb.so` and
+uses the matching committed headers under the same versioned bundle.
 
 Important distinction:
 
-- `MINIKV_ROCKSDB_TAG` is the fallback fetch pin used when the bundle is absent
+- `MINIKV_ROCKSDB_VERSION` selects the committed bundle and default fallback
+  tag
+- `MINIKV_ROCKSDB_TAG` is an optional fallback fetch override used when the
+  bundle is absent
 - the committed bundle itself is described by
-  `third_party/rocksdb/linux-x86_64/BUNDLE_INFO.env`
-- those two values may differ because the bundle can be refreshed from a local
-  checkout rather than from the fallback tag
+  `third_party/rocksdb/bundles/<version>/linux-x86_64/BUNDLE_INFO.env`
+- `current` intentionally names the default bundle rather than a RocksDB tag
 
 If the bundle is missing, CMake falls back to either:
 
 - `MINIKV_ROCKSDB_SOURCE_DIR`
-- `FetchContent` using `MINIKV_ROCKSDB_TAG`
+- `FetchContent` using the effective fallback tag
 
 Pinned RocksDB fallback build settings:
 
@@ -109,16 +114,20 @@ Preferred helper script:
 ```bash
 ./tools/build_linux.sh
 ./tools/build_linux.sh --skip-tests
+./tools/build_linux.sh --rocksdb-version 5.18.3
 ./tools/build_linux.sh --rocksdb-source-dir /path/to/rocksdb
 ./tools/build_linux.sh \
+  --rocksdb-version current \
   --rocksdb-source-dir /path/to/rocksdb \
   --rocksdb-reuse-build-dir /path/to/rocksdb/build-minikv
 ```
 
 `tools/build_linux.sh`:
 
-- refreshes the committed bundle first when `--rocksdb-source-dir` is provided
-- configures CMake to prefer the committed bundle when it is complete
+- selects `current` by default, or `5.18.3` with `--rocksdb-version 5.18.3`
+- refreshes the selected committed bundle first when `--rocksdb-source-dir` is
+  provided
+- configures CMake to prefer the selected committed bundle when it is complete
 - exports `build/compile_commands.json` by default
 - refreshes a top-level `compile_commands.json` symlink when the build
   directory lives inside the repository
@@ -155,6 +164,11 @@ docker exec <container> sh -lc '
 
 docker exec <container> sh -lc '
   cd /workspace/projects/OpenSource/minikv &&
+  ./tools/build_linux.sh --rocksdb-version 5.18.3 --build-dir build-rocksdb-5.18.3
+'
+
+docker exec <container> sh -lc '
+  cd /workspace/projects/OpenSource/minikv &&
   ctest --test-dir build --output-on-failure
 '
 ```
@@ -166,6 +180,7 @@ committed bundle when its source commit changes:
 docker exec <container> sh -lc '
   cd /workspace/projects/OpenSource/minikv &&
   ./tools/build_linux.sh \
+    --rocksdb-version current \
     --rocksdb-source-dir /path/to/rocksdb \
     --rocksdb-reuse-build-dir /path/to/rocksdb/build-minikv
 '

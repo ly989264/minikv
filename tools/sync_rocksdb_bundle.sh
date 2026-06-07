@@ -3,13 +3,41 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-BUNDLE_DIR="${REPO_ROOT}/third_party/rocksdb/linux-x86_64"
+ROCKSDB_VERSION="current"
+BUNDLE_DIR=""
 ROCKSDB_SOURCE_DIR=""
 REUSE_BUILD_DIR=""
-BUILD_DIR="/tmp/minikv-rocksdb-bundle-build"
+BUILD_DIR=""
 JOBS="${JOBS:-}"
 FORCE=0
 STATUS_ONLY=0
+
+supported_rocksdb_version() {
+  case "$1" in
+    current|5.18.3)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+default_rocksdb_bundle_dir() {
+  printf '%s\n' "${REPO_ROOT}/third_party/rocksdb/bundles/${ROCKSDB_VERSION}/linux-x86_64"
+}
+
+default_rocksdb_source_ref() {
+  if [[ "${ROCKSDB_VERSION}" == "current" ]]; then
+    printf '%s\n' "HEAD"
+  else
+    printf 'v%s\n' "${ROCKSDB_VERSION}"
+  fi
+}
+
+sanitize_rocksdb_version() {
+  printf '%s' "${ROCKSDB_VERSION}" | tr -c 'A-Za-z0-9_.-' '_'
+}
 
 usage() {
   cat <<'EOF'
@@ -18,8 +46,9 @@ Usage:
   tools/sync_rocksdb_bundle.sh --status [--rocksdb-source-dir DIR]
 
 Options:
+  --rocksdb-version VER     RocksDB bundle selector. Supported: current, 5.18.3.
   --rocksdb-source-dir DIR   Local RocksDB source checkout used for commit detection.
-  --bundle-dir DIR           Bundle output directory. Default: third_party/rocksdb/linux-x86_64
+  --bundle-dir DIR           Bundle output directory. Default: third_party/rocksdb/bundles/<version>/linux-x86_64
   --build-dir DIR            Temporary out-of-tree RocksDB build directory.
   --reuse-build-dir DIR      Reuse an existing RocksDB shared-library build instead of rebuilding.
   --jobs N                   Build parallelism.
@@ -28,7 +57,10 @@ Options:
 
 Examples:
   ./tools/sync_rocksdb_bundle.sh --status
+  ./tools/sync_rocksdb_bundle.sh --status --rocksdb-version 5.18.3
   ./tools/sync_rocksdb_bundle.sh --rocksdb-source-dir /workspace/projects/OpenSource/rocksdb
+  ./tools/sync_rocksdb_bundle.sh --rocksdb-version 5.18.3 \
+    --rocksdb-source-dir /workspace/projects/OpenSource/rocksdb
   ./tools/sync_rocksdb_bundle.sh --rocksdb-source-dir /workspace/projects/OpenSource/rocksdb \
     --reuse-build-dir /workspace/projects/OpenSource/rocksdb/build-minikv
 EOF
@@ -36,6 +68,10 @@ EOF
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --rocksdb-version)
+      ROCKSDB_VERSION="$2"
+      shift 2
+      ;;
     --rocksdb-source-dir)
       ROCKSDB_SOURCE_DIR="$2"
       shift 2
@@ -76,6 +112,20 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+if ! supported_rocksdb_version "${ROCKSDB_VERSION}"; then
+  echo "unsupported RocksDB version: ${ROCKSDB_VERSION}" >&2
+  echo "supported versions: current, 5.18.3" >&2
+  exit 1
+fi
+
+if [[ -z "${BUNDLE_DIR}" ]]; then
+  BUNDLE_DIR="$(default_rocksdb_bundle_dir)"
+fi
+
+if [[ -z "${BUILD_DIR}" ]]; then
+  BUILD_DIR="/tmp/minikv-rocksdb-bundle-build-$(sanitize_rocksdb_version)"
+fi
+
 if [[ -z "${JOBS}" ]]; then
   if command -v nproc >/dev/null 2>&1; then
     JOBS="$(nproc)"
@@ -93,6 +143,7 @@ bundle_manifest="${BUNDLE_DIR}/BUNDLE_INFO.env"
 bundle_include="${BUNDLE_DIR}/include/rocksdb"
 bundle_lib_dir="${BUNDLE_DIR}/lib"
 bundle_link="${bundle_lib_dir}/librocksdb.so"
+source_ref="$(default_rocksdb_source_ref)"
 
 bundle_commit=""
 bundle_describe=""
@@ -107,13 +158,18 @@ fi
 
 source_commit=""
 source_describe=""
+source_tree_for_build="${ROCKSDB_SOURCE_DIR}"
 if [[ -n "${ROCKSDB_SOURCE_DIR}" ]]; then
   if [[ ! -d "${ROCKSDB_SOURCE_DIR}/.git" ]]; then
     echo "rocksdb source dir is not a git checkout: ${ROCKSDB_SOURCE_DIR}" >&2
     exit 1
   fi
-  source_commit="$(git -C "${ROCKSDB_SOURCE_DIR}" rev-parse HEAD)"
-  source_describe="$(git -C "${ROCKSDB_SOURCE_DIR}" describe --tags --always --dirty)"
+  source_commit="$(git -C "${ROCKSDB_SOURCE_DIR}" rev-parse "${source_ref}^{commit}")"
+  if [[ "${ROCKSDB_VERSION}" == "current" ]]; then
+    source_describe="$(git -C "${ROCKSDB_SOURCE_DIR}" describe --tags --always --dirty)"
+  else
+    source_describe="$(git -C "${ROCKSDB_SOURCE_DIR}" describe --tags --always "${source_ref}^{commit}")"
+  fi
 fi
 
 bundle_ready=0
@@ -131,6 +187,7 @@ elif [[ "${FORCE}" -eq 1 ]]; then
 fi
 
 if [[ "${STATUS_ONLY}" -eq 1 ]]; then
+  echo "rocksdb_version=${ROCKSDB_VERSION}"
   echo "bundle_dir=${BUNDLE_DIR}"
   if [[ "${bundle_ready}" -eq 1 ]]; then
     echo "bundle_status=present"
@@ -141,6 +198,7 @@ if [[ "${STATUS_ONLY}" -eq 1 ]]; then
     echo "bundle_status=missing"
   fi
   if [[ -n "${source_commit}" ]]; then
+    echo "source_ref=${source_ref}"
     echo "source_commit=${source_commit}"
     echo "source_describe=${source_describe}"
   fi
@@ -161,6 +219,16 @@ if [[ "${needs_refresh}" -eq 0 ]]; then
   echo "rocksdb bundle is already up to date: ${source_commit}"
   exit 0
 fi
+
+prepare_versioned_source_tree() {
+  local source_dir="$1"
+  local ref="$2"
+  local destination_dir="$3"
+
+  rm -rf "${destination_dir}"
+  mkdir -p "${destination_dir}"
+  git -C "${source_dir}" archive --format=tar "${ref}" | tar -x -C "${destination_dir}"
+}
 
 resolve_real_library() {
   local build_root="$1"
@@ -202,22 +270,36 @@ if [[ -n "${REUSE_BUILD_DIR}" ]]; then
   real_lib="$(resolve_real_library "${REUSE_BUILD_DIR}")"
   soname_link="$(resolve_soname_link "${REUSE_BUILD_DIR}")"
 else
-  cmake -S "${ROCKSDB_SOURCE_DIR}" -B "${BUILD_DIR}" \
-    -DCMAKE_BUILD_TYPE=Release \
-    -DROCKSDB_BUILD_SHARED=ON \
-    -DWITH_MINIKV=OFF \
-    -DWITH_TESTS=OFF \
-    -DWITH_TOOLS=OFF \
-    -DWITH_CORE_TOOLS=OFF \
-    -DWITH_BENCHMARK_TOOLS=OFF \
-    -DWITH_GFLAGS=OFF \
-    -DWITH_LIBURING=OFF \
-    -DWITH_SNAPPY=OFF \
-    -DWITH_LZ4=OFF \
-    -DWITH_ZLIB=OFF \
-    -DWITH_ZSTD=OFF \
-    -DWITH_BZ2=OFF \
+  if [[ "${ROCKSDB_VERSION}" != "current" ]]; then
+    source_tree_for_build="${BUILD_DIR}.source"
+    prepare_versioned_source_tree "${ROCKSDB_SOURCE_DIR}" "${source_ref}" \
+      "${source_tree_for_build}"
+  fi
+
+  cmake_args=(
+    -DCMAKE_BUILD_TYPE=Release
+    -DFAIL_ON_WARNINGS=OFF
+    -DROCKSDB_BUILD_SHARED=ON
+    -DWITH_MINIKV=OFF
+    -DWITH_TESTS=OFF
+    -DWITH_TOOLS=OFF
+    -DWITH_CORE_TOOLS=OFF
+    -DWITH_BENCHMARK_TOOLS=OFF
+    -DWITH_GFLAGS=OFF
+    -DWITH_LIBURING=OFF
+    -DWITH_SNAPPY=OFF
+    -DWITH_LZ4=OFF
+    -DWITH_ZLIB=OFF
+    -DWITH_ZSTD=OFF
+    -DWITH_BZ2=OFF
     -DWITH_JEMALLOC=OFF
+  )
+  if [[ "${ROCKSDB_VERSION}" == "5.18.3" ]]; then
+    cmake_args+=("-DCMAKE_CXX_FLAGS=-include cstdint")
+  fi
+
+  cmake -S "${source_tree_for_build}" -B "${BUILD_DIR}" \
+    "${cmake_args[@]}"
   cmake --build "${BUILD_DIR}" --target rocksdb-shared --parallel "${JOBS}"
   real_lib="$(resolve_real_library "${BUILD_DIR}")"
   soname_link="$(resolve_soname_link "${BUILD_DIR}")"
@@ -226,7 +308,13 @@ fi
 real_lib_name="$(basename "${real_lib}")"
 
 mkdir -p "${bundle_lib_dir}" "${BUNDLE_DIR}/include"
-refresh_bundle_headers "${ROCKSDB_SOURCE_DIR}/include/rocksdb" "${bundle_include}"
+rm -f "${bundle_lib_dir}"/librocksdb.so*
+if [[ "${ROCKSDB_VERSION}" != "current" && "${source_tree_for_build}" == "${ROCKSDB_SOURCE_DIR}" ]]; then
+  source_tree_for_build="${BUILD_DIR}.source"
+  prepare_versioned_source_tree "${ROCKSDB_SOURCE_DIR}" "${source_ref}" \
+    "${source_tree_for_build}"
+fi
+refresh_bundle_headers "${source_tree_for_build}/include/rocksdb" "${bundle_include}"
 cp "${real_lib}" "${bundle_lib_dir}/${real_lib_name}"
 if command -v strip >/dev/null 2>&1; then
   strip --strip-unneeded "${bundle_lib_dir}/${real_lib_name}"
@@ -235,6 +323,7 @@ ln -sfn "${real_lib_name}" "${bundle_lib_dir}/${soname_link}"
 ln -sfn "${soname_link}" "${bundle_link}"
 
 cat > "${bundle_manifest}" <<EOF
+ROCKSDB_BUNDLE_VERSION=${ROCKSDB_VERSION}
 ROCKSDB_SOURCE_COMMIT=${source_commit}
 ROCKSDB_SOURCE_DESCRIBE=${source_describe}
 ROCKSDB_LIBRARY_REALNAME=${real_lib_name}
@@ -244,4 +333,4 @@ ROCKSDB_BUNDLE_PLATFORM=linux-x86_64
 ROCKSDB_BUNDLE_CREATED_AT=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 EOF
 
-echo "updated rocksdb bundle in ${BUNDLE_DIR}"
+echo "updated RocksDB ${ROCKSDB_VERSION} bundle in ${BUNDLE_DIR}"

@@ -2,9 +2,10 @@
 
 ## Purpose
 
-`minikv` keeps a committed Linux RocksDB bundle under
-`third_party/rocksdb/linux-x86_64/` so the normal Linux-container workflow does
-not need to fetch RocksDB source or rebuild RocksDB from scratch every session.
+`minikv` keeps committed Linux RocksDB bundles under
+`third_party/rocksdb/bundles/<version>/linux-x86_64/` so the normal
+Linux-container workflow does not need to fetch RocksDB source or rebuild
+RocksDB from scratch every session.
 
 The bundle contains only the pieces `minikv` needs to compile and run:
 
@@ -16,14 +17,15 @@ The bundle contains only the pieces `minikv` needs to compile and run:
 
 Expected files:
 
-- `third_party/rocksdb/linux-x86_64/include/rocksdb/...`
-- `third_party/rocksdb/linux-x86_64/lib/librocksdb.so`
-- `third_party/rocksdb/linux-x86_64/lib/librocksdb.so.<soname>`
-- `third_party/rocksdb/linux-x86_64/lib/librocksdb.so.<full-version>`
-- `third_party/rocksdb/linux-x86_64/BUNDLE_INFO.env`
+- `third_party/rocksdb/bundles/current/linux-x86_64/include/rocksdb/...`
+- `third_party/rocksdb/bundles/current/linux-x86_64/lib/librocksdb.so`
+- `third_party/rocksdb/bundles/5.18.3/linux-x86_64/include/rocksdb/...`
+- `third_party/rocksdb/bundles/5.18.3/linux-x86_64/lib/librocksdb.so`
+- `third_party/rocksdb/bundles/<version>/linux-x86_64/BUNDLE_INFO.env`
 
 `BUNDLE_INFO.env` records:
 
+- `ROCKSDB_BUNDLE_VERSION`
 - `ROCKSDB_SOURCE_COMMIT`
 - `ROCKSDB_SOURCE_DESCRIBE`
 - `ROCKSDB_LIBRARY_REALNAME`
@@ -32,8 +34,9 @@ Expected files:
 - `ROCKSDB_BUNDLE_PLATFORM`
 - `ROCKSDB_BUNDLE_CREATED_AT`
 
-The manifest is the source of truth for the committed bundle. It is separate
-from the fallback `MINIKV_ROCKSDB_TAG` used by `FetchContent`.
+The manifest is the source of truth for a committed bundle. It is separate from
+the fallback tag used by `FetchContent`. The `current` selector intentionally
+names the default bundle rather than a RocksDB tag.
 
 ## Status And Refresh
 
@@ -41,8 +44,10 @@ Check bundle status:
 
 ```bash
 ./tools/sync_rocksdb_bundle.sh --status
+./tools/sync_rocksdb_bundle.sh --status --rocksdb-version 5.18.3
 ./tools/sync_rocksdb_bundle.sh \
   --status \
+  --rocksdb-version current \
   --rocksdb-source-dir /path/to/rocksdb
 ```
 
@@ -50,6 +55,11 @@ Refresh the bundle from a local RocksDB checkout:
 
 ```bash
 ./tools/sync_rocksdb_bundle.sh \
+  --rocksdb-version current \
+  --rocksdb-source-dir /path/to/rocksdb
+
+./tools/sync_rocksdb_bundle.sh \
+  --rocksdb-version 5.18.3 \
   --rocksdb-source-dir /path/to/rocksdb
 ```
 
@@ -58,12 +68,16 @@ rebuilding:
 
 ```bash
 ./tools/sync_rocksdb_bundle.sh \
+  --rocksdb-version current \
   --rocksdb-source-dir /path/to/rocksdb \
   --reuse-build-dir /path/to/rocksdb/build-minikv
 ```
 
-The script compares `git rev-parse HEAD` from the supplied RocksDB checkout
-with `ROCKSDB_SOURCE_COMMIT` in `BUNDLE_INFO.env`.
+For `current`, the script compares `git rev-parse HEAD` from the supplied
+RocksDB checkout with `ROCKSDB_SOURCE_COMMIT` in `BUNDLE_INFO.env`. For
+versioned selectors such as `5.18.3`, it builds from the matching tag
+(`v5.18.3`) via a temporary source archive, without changing the source
+checkout.
 
 - if the commit matches and the bundle files exist, the script exits without
   rebuilding
@@ -78,8 +92,10 @@ Do not edit bundled RocksDB headers or libraries by hand. Refresh them through
 `cmake/Dependencies.cmake` prefers the committed bundle when:
 
 - `MINIKV_USE_BUNDLED_ROCKSDB=ON`
+- `MINIKV_ROCKSDB_VERSION` is `current` or `5.18.3`
 - the current build is Linux on `x86_64` or `amd64`
-- `MINIKV_ROCKSDB_BUNDLE_DIR` contains the expected headers and shared library
+- `MINIKV_ROCKSDB_BUNDLE_DIR` is empty or contains the expected headers and
+  shared library
 
 When that path is available, CMake creates an imported shared-library target
 and sets the runtime rpath so `minikv_server` and the tests can find the
@@ -87,8 +103,8 @@ bundled `librocksdb.so` inside the repository.
 
 `tools/build_linux.sh` follows this rule:
 
-- if `--rocksdb-source-dir` is not provided and the bundle exists, build
-  against the committed bundle
+- if `--rocksdb-source-dir` is not provided and the selected bundle exists,
+  build against the committed bundle
 - if `--rocksdb-source-dir` is provided, refresh the bundle only when the
   source commit changed, then build against the bundle
 - if the bundle is incomplete and no source dir is provided, fail fast instead

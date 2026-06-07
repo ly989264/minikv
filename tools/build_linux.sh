@@ -6,18 +6,35 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILD_DIR="${REPO_ROOT}/build"
 BUILD_TYPE="Debug"
 JOBS="${JOBS:-}"
+ROCKSDB_VERSION="current"
 ROCKSDB_SOURCE_DIR=""
 ROCKSDB_REUSE_BUILD_DIR=""
-BUNDLE_DIR="${REPO_ROOT}/third_party/rocksdb/linux-x86_64"
+BUNDLE_DIR=""
 GTEST_DIR="${REPO_ROOT}/third_party/googletest"
 SKIP_TESTS=0
 FORCE_BUNDLE_REFRESH=0
 EXPORT_COMPILE_COMMANDS=1
 
+supported_rocksdb_version() {
+  case "$1" in
+    current|5.18.3)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+default_rocksdb_bundle_dir() {
+  printf '%s\n' "${REPO_ROOT}/third_party/rocksdb/bundles/${ROCKSDB_VERSION}/linux-x86_64"
+}
+
 usage() {
   cat <<'EOF'
 Usage:
   tools/build_linux.sh [--build-dir DIR] [--build-type TYPE] [--jobs N]
+                       [--rocksdb-version current|5.18.3]
                        [--rocksdb-source-dir DIR]
                        [--rocksdb-reuse-build-dir DIR]
                        [--force-bundle-refresh]
@@ -27,11 +44,13 @@ Usage:
 Defaults:
   --build-dir build
   --build-type Debug
+  --rocksdb-version current
   compile_commands.json exported
   tests enabled
 
 Examples:
   ./tools/build_linux.sh
+  ./tools/build_linux.sh --rocksdb-version 5.18.3
   ./tools/build_linux.sh --rocksdb-source-dir /path/to/rocksdb
   ./tools/build_linux.sh --rocksdb-source-dir /path/to/rocksdb \
     --rocksdb-reuse-build-dir /path/to/rocksdb/build-minikv
@@ -50,6 +69,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --jobs)
       JOBS="$2"
+      shift 2
+      ;;
+    --rocksdb-version)
+      ROCKSDB_VERSION="$2"
       shift 2
       ;;
     --rocksdb-source-dir)
@@ -84,6 +107,16 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+if ! supported_rocksdb_version "${ROCKSDB_VERSION}"; then
+  echo "unsupported RocksDB version: ${ROCKSDB_VERSION}" >&2
+  echo "supported versions: current, 5.18.3" >&2
+  exit 1
+fi
+
+if [[ -z "${BUNDLE_DIR}" ]]; then
+  BUNDLE_DIR="$(default_rocksdb_bundle_dir)"
+fi
+
 if [[ -z "${JOBS}" ]]; then
   if command -v nproc >/dev/null 2>&1; then
     JOBS="$(nproc)"
@@ -94,6 +127,7 @@ fi
 
 if [[ -n "${ROCKSDB_SOURCE_DIR}" ]]; then
   sync_args=(
+    --rocksdb-version "${ROCKSDB_VERSION}"
     --rocksdb-source-dir "${ROCKSDB_SOURCE_DIR}"
     --bundle-dir "${BUNDLE_DIR}"
     --jobs "${JOBS}"
@@ -123,8 +157,9 @@ expected:
   ${bundle_lib}
 
 This build entrypoint is intended to work offline. Refresh the committed bundle
-with ./tools/sync_rocksdb_bundle.sh from a local RocksDB checkout and commit the
-resulting lib/ files together with BUNDLE_INFO.env.
+with ./tools/sync_rocksdb_bundle.sh --rocksdb-version ${ROCKSDB_VERSION} from a
+local RocksDB checkout and commit the resulting lib/ files together with
+BUNDLE_INFO.env.
 EOF
   exit 1
 fi
@@ -139,11 +174,17 @@ cmake_args=(
 if [[ "${bundle_ready}" -eq 1 ]]; then
   cmake_args+=(
     "-DMINIKV_USE_BUNDLED_ROCKSDB=ON"
+    "-DMINIKV_ROCKSDB_VERSION=${ROCKSDB_VERSION}"
     "-DMINIKV_ROCKSDB_BUNDLE_DIR=${BUNDLE_DIR}"
     "-DMINIKV_FETCH_DEPS=OFF"
   )
 elif [[ -n "${ROCKSDB_SOURCE_DIR}" ]]; then
-  cmake_args+=("-DMINIKV_ROCKSDB_SOURCE_DIR=${ROCKSDB_SOURCE_DIR}")
+  cmake_args+=(
+    "-DMINIKV_ROCKSDB_VERSION=${ROCKSDB_VERSION}"
+    "-DMINIKV_ROCKSDB_SOURCE_DIR=${ROCKSDB_SOURCE_DIR}"
+  )
+else
+  cmake_args+=("-DMINIKV_ROCKSDB_VERSION=${ROCKSDB_VERSION}")
 fi
 
 if [[ -f "${GTEST_DIR}/CMakeLists.txt" ]]; then
@@ -197,6 +238,7 @@ if [[ "${SKIP_TESTS}" -eq 0 ]]; then
 fi
 
 echo "build dir: ${BUILD_DIR}"
+echo "rocksdb version: ${ROCKSDB_VERSION}"
 if [[ "${EXPORT_COMPILE_COMMANDS}" -eq 1 && -f "${BUILD_DIR}/compile_commands.json" ]]; then
   echo "compile commands: ${BUILD_DIR}/compile_commands.json"
 fi

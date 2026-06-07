@@ -21,6 +21,15 @@ docker exec <container> sh -lc '
 '
 ```
 
+To run the same baseline against RocksDB 5.18.3:
+
+```bash
+docker exec <container> sh -lc '
+  cd /workspace/projects/OpenSource/minikv &&
+  ./tools/build_linux.sh --rocksdb-version 5.18.3 --build-dir build-rocksdb-5.18.3
+'
+```
+
 If you want to reuse an existing local RocksDB checkout instead of relying on
 the committed bundle alone:
 
@@ -28,6 +37,7 @@ the committed bundle alone:
 docker exec <container> sh -lc '
   cd /workspace/projects/OpenSource/minikv &&
   ./tools/build_linux.sh \
+    --rocksdb-version current \
     --rocksdb-source-dir /path/to/rocksdb
 '
 ```

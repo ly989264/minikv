@@ -52,6 +52,12 @@ Build with the committed RocksDB bundle and vendored googletest:
 ./tools/build_linux.sh
 ```
 
+Build against the committed RocksDB 5.18.3 bundle instead:
+
+```bash
+./tools/build_linux.sh --rocksdb-version 5.18.3
+```
+
 That flow also exports `build/compile_commands.json` for clangd-compatible
 tooling. When the build directory lives under the repository root, the script
 refreshes a top-level `compile_commands.json` symlink so editors such as VS
@@ -75,7 +81,8 @@ first:
 
 The first form keeps the normal offline bundle-based workflow. The second form
 refreshes the committed bundle only when the source checkout commit differs
-from the metadata recorded in `third_party/rocksdb/linux-x86_64/BUNDLE_INFO.env`.
+from the metadata recorded under
+`third_party/rocksdb/bundles/<version>/linux-x86_64/BUNDLE_INFO.env`.
 
 ## Docs
 
@@ -111,5 +118,5 @@ from the metadata recorded in `third_party/rocksdb/linux-x86_64/BUNDLE_INFO.env`
 - `tools/`: build, smoke, and maintenance scripts
 - `third_party/minijson/`: checked-in header-only JSON parser/serializer used
   for offline JSON command support
-- `third_party/rocksdb/linux-x86_64/`: committed RocksDB headers, shared
-  library, symlinks, and bundle metadata for Linux container builds
+- `third_party/rocksdb/bundles/`: committed RocksDB headers, shared libraries,
+  symlinks, and bundle metadata for Linux container builds
