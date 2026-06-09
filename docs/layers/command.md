@@ -42,7 +42,17 @@ Supported commands:
 - `PERSIST`
 - `SET`
 - `GET`
+- `MGET`
+- `MSET`
 - `STRLEN`
+- `APPEND`
+- `GETRANGE`
+- `SETRANGE`
+- `GETSET`
+- `INCR`
+- `DECR`
+- `INCRBY`
+- `DECRBY`
 - `GETBIT`
 - `SETBIT`
 - `BITCOUNT`
@@ -115,7 +125,8 @@ Those commands are registered by builtin modules during startup:
 
 - `CoreModule`: `PING`, `TYPE`, `EXISTS`, `DEL`, `EXPIRE`, `TTL`, `PTTL`,
   `PERSIST`
-- `StringModule`: `SET`, `GET`, `STRLEN`
+- `StringModule`: `SET`, `GET`, `MGET`, `MSET`, `STRLEN`, `APPEND`,
+  `GETRANGE`, `SETRANGE`, `GETSET`, `INCR`, `DECR`, `INCRBY`, `DECRBY`
 - `BitmapModule`: `GETBIT`, `SETBIT`, `BITCOUNT`
 - `HashModule`: `HSET`, `HGET`, `HMGET`, `HLEN`, `HEXISTS`, `HGETALL`,
   `HKEYS`, `HVALS`, `HDEL`
@@ -178,28 +189,31 @@ Current helpers can build:
 
 Current builtin commands use these shapes:
 
-- simple string: `PING`, `SET`, applied `JSON.SET`, and `LTRIM`
-- bulk string: `TYPE`, `GET`, `JSON.GET`, single-result `JSON.TYPE`,
-  single-result `JSON.NUMINCRBY`, `LPOP`, `RPOP`, `SRANDMEMBER`, `SPOP`,
-  `ZINCRBY`, `ZSCORE`, `GEODIST`, and `XADD`
+- simple string: `PING`, `SET`, `MSET`, applied `JSON.SET`, and `LTRIM`
+- bulk string: `TYPE`, `GET`, `GETRANGE`, `GETSET`, `JSON.GET`,
+  single-result `JSON.TYPE`, single-result `JSON.NUMINCRBY`, `LPOP`, `RPOP`,
+  `SRANDMEMBER`, `SPOP`, `ZINCRBY`, `ZSCORE`, `GEODIST`, and `XADD`
 - integer: `EXISTS`, `DEL`, `EXPIRE`, `TTL`, `PTTL`, `PERSIST`, `STRLEN`,
-  `GETBIT`, `SETBIT`, `BITCOUNT`, `HSET`, `HLEN`, `HEXISTS`, `HDEL`,
-  JSON count commands, single-result `JSON.TOGGLE`, `LLEN`, `LPUSH`, `RPUSH`,
-  `LREM`, `SADD`, `SCARD`, `SISMEMBER`, `SMOVE`, `SREM`, `SDIFFSTORE`,
+  `APPEND`, `SETRANGE`, `INCR`, `DECR`, `INCRBY`, `DECRBY`, `GETBIT`,
+  `SETBIT`, `BITCOUNT`, `HSET`, `HLEN`, `HEXISTS`, `HDEL`, JSON count
+  commands, single-result `JSON.TOGGLE`, `LLEN`, `LPUSH`, `RPUSH`, `LREM`,
+  `SADD`, `SCARD`, `SISMEMBER`, `SMOVE`, `SREM`, `SDIFFSTORE`,
   `SINTERSTORE`, `SUNIONSTORE`, `ZADD`, `ZCARD`, `ZCOUNT`, `ZLEXCOUNT`,
   `ZRANK`, `ZREM`, `GEOADD`, `XTRIM`, `XDEL`, and `XLEN`
 - flat bulk-string arrays or arrays of bulk/null/integer values: `HMGET`,
-  `HGETALL`, `HKEYS`, `HVALS`, `JSON.MGET`, JSONPath `JSON.TYPE`, JSONPath
-  `JSON.TOGGLE`, `LRANGE`, `SDIFF`, `SINTER`, `SMEMBERS`, `SMISMEMBER`,
-  counted `SPOP`, counted `SRANDMEMBER`, `SUNION`, `GEOHASH`, `GEOSEARCH`
-  without `WITH*`, `ZRANGE`, `ZRANGEBYLEX`, and `ZRANGEBYSCORE`
+  `HGETALL`, `HKEYS`, `HVALS`, `MGET`, `JSON.MGET`, JSONPath `JSON.TYPE`,
+  JSONPath `JSON.TOGGLE`, `LRANGE`, `SDIFF`, `SINTER`, `SMEMBERS`,
+  `SMISMEMBER`, counted `SPOP`, counted `SRANDMEMBER`, `SUNION`, `GEOHASH`,
+  `GEOSEARCH` without `WITH*`, `ZRANGE`, `ZRANGEBYLEX`, and
+  `ZRANGEBYSCORE`
 - nested arrays: `GEOPOS`, `GEOSEARCH` with `WITH*`, `XRANGE`, `XREVRANGE`,
   and `XREAD`
-- null: missing-value reads such as `GET`, `HGET`, `JSON.GET`, `LPOP`, `RPOP`,
-  `SPOP`, `SRANDMEMBER`, `ZRANK`, `ZSCORE`, and `GEODIST`; `JSON.SET` when
-  `NX`/`XX` prevents a write; `JSON.TYPE`, `JSON.TOGGLE`, and
-  `JSON.NUMINCRBY` when the target is missing or incompatible; and `XREAD`
-  when every requested stream has no newer entries
+- null: missing-value reads such as `GET`, missing old values for `GETSET`,
+  missing elements inside `MGET`, `HGET`, `JSON.GET`, `LPOP`, `RPOP`, `SPOP`,
+  `SRANDMEMBER`, `ZRANK`, `ZSCORE`, and `GEODIST`; `JSON.SET` when `NX`/`XX`
+  prevents a write; `JSON.TYPE`, `JSON.TOGGLE`, and `JSON.NUMINCRBY` when the
+  target is missing or incompatible; and `XREAD` when every requested stream
+  has no newer entries
 
 ## Current Design Conclusion
 

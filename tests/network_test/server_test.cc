@@ -890,6 +890,68 @@ TEST_F(MiniKVServerTest, StringLifecycleCommandsWorkOverNetwork) {
   close(fd);
 }
 
+TEST_F(MiniKVServerTest, ExtendedStringCommandsWorkOverNetwork) {
+  const int fd = ConnectToServer(server_->port());
+
+  WriteAll(fd, EncodeCommand({"MSET", "str:a", "one", "str:b", "two",
+                              "str:a", "final"}));
+  RespValue reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kSimpleString);
+  EXPECT_EQ(reply.text, "OK");
+
+  WriteAll(fd, EncodeCommand({"MGET", "str:a", "missing", "str:b"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kArray);
+  ASSERT_EQ(reply.array.size(), 3U);
+  ASSERT_EQ(reply.array[0].type, RespValue::Type::kBulkString);
+  EXPECT_EQ(reply.array[0].text, "final");
+  ASSERT_EQ(reply.array[1].type, RespValue::Type::kNull);
+  ASSERT_EQ(reply.array[2].type, RespValue::Type::kBulkString);
+  EXPECT_EQ(reply.array[2].text, "two");
+
+  WriteAll(fd, EncodeCommand({"APPEND", "str:a", "-tail"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kInteger);
+  EXPECT_EQ(reply.integer, 10);
+
+  WriteAll(fd, EncodeCommand({"GETRANGE", "str:a", "-4", "-1"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kBulkString);
+  EXPECT_EQ(reply.text, "tail");
+
+  WriteAll(fd, EncodeCommand({"SETRANGE", "str:hole", "2", "xy"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kInteger);
+  EXPECT_EQ(reply.integer, 4);
+
+  WriteAll(fd, EncodeCommand({"GET", "str:hole"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kBulkString);
+  EXPECT_EQ(reply.text, std::string("\0\0xy", 4));
+
+  WriteAll(fd, EncodeCommand({"GETSET", "str:a", "reset"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kBulkString);
+  EXPECT_EQ(reply.text, "final-tail");
+
+  WriteAll(fd, EncodeCommand({"INCR", "str:int"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kInteger);
+  EXPECT_EQ(reply.integer, 1);
+
+  WriteAll(fd, EncodeCommand({"INCRBY", "str:int", "41"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kInteger);
+  EXPECT_EQ(reply.integer, 42);
+
+  WriteAll(fd, EncodeCommand({"DECRBY", "str:int", "-1"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kInteger);
+  EXPECT_EQ(reply.integer, 43);
+
+  close(fd);
+}
+
 TEST_F(MiniKVServerTest, BitmapCommandsShareStringBytesOverNetwork) {
   const int fd = ConnectToServer(server_->port());
 

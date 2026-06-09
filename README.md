@@ -9,7 +9,8 @@ Current builtin modules:
 
 - `CoreModule`: `PING`, `TYPE`, `EXISTS`, `DEL`, `EXPIRE`, `TTL`, `PTTL`,
   `PERSIST`
-- `StringModule`: `SET`, `GET`, `STRLEN`
+- `StringModule`: `SET`, `GET`, `MGET`, `MSET`, `STRLEN`, `APPEND`,
+  `GETRANGE`, `SETRANGE`, `GETSET`, `INCR`, `DECR`, `INCRBY`, `DECRBY`
 - `BitmapModule`: `GETBIT`, `SETBIT`, `BITCOUNT`
 - `HashModule`: `HSET`, `HGET`, `HMGET`, `HLEN`, `HEXISTS`, `HGETALL`,
   `HKEYS`, `HVALS`, `HDEL`

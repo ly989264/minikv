@@ -233,6 +233,22 @@ TEST(ModuleManagerTest, BuiltinModulesLoadIntoUnifiedRegistry) {
   const minikv::CmdRegistration* get = manager.command_registry().Find("GET");
   const minikv::CmdRegistration* strlen =
       manager.command_registry().Find("STRLEN");
+  const minikv::CmdRegistration* mget = manager.command_registry().Find("MGET");
+  const minikv::CmdRegistration* mset = manager.command_registry().Find("MSET");
+  const minikv::CmdRegistration* append =
+      manager.command_registry().Find("APPEND");
+  const minikv::CmdRegistration* getrange =
+      manager.command_registry().Find("GETRANGE");
+  const minikv::CmdRegistration* setrange =
+      manager.command_registry().Find("SETRANGE");
+  const minikv::CmdRegistration* getset =
+      manager.command_registry().Find("GETSET");
+  const minikv::CmdRegistration* incr = manager.command_registry().Find("INCR");
+  const minikv::CmdRegistration* decr = manager.command_registry().Find("DECR");
+  const minikv::CmdRegistration* incrby =
+      manager.command_registry().Find("INCRBY");
+  const minikv::CmdRegistration* decrby =
+      manager.command_registry().Find("DECRBY");
   const minikv::CmdRegistration* getbit =
       manager.command_registry().Find("GETBIT");
   const minikv::CmdRegistration* setbit =
@@ -332,6 +348,16 @@ TEST(ModuleManagerTest, BuiltinModulesLoadIntoUnifiedRegistry) {
   ASSERT_NE(set, nullptr);
   ASSERT_NE(get, nullptr);
   ASSERT_NE(strlen, nullptr);
+  ASSERT_NE(mget, nullptr);
+  ASSERT_NE(mset, nullptr);
+  ASSERT_NE(append, nullptr);
+  ASSERT_NE(getrange, nullptr);
+  ASSERT_NE(setrange, nullptr);
+  ASSERT_NE(getset, nullptr);
+  ASSERT_NE(incr, nullptr);
+  ASSERT_NE(decr, nullptr);
+  ASSERT_NE(incrby, nullptr);
+  ASSERT_NE(decrby, nullptr);
   ASSERT_NE(getbit, nullptr);
   ASSERT_NE(setbit, nullptr);
   ASSERT_NE(bitcount, nullptr);
@@ -393,6 +419,16 @@ TEST(ModuleManagerTest, BuiltinModulesLoadIntoUnifiedRegistry) {
   EXPECT_EQ(set->owner_module, "string");
   EXPECT_EQ(get->owner_module, "string");
   EXPECT_EQ(strlen->owner_module, "string");
+  EXPECT_EQ(mget->owner_module, "string");
+  EXPECT_EQ(mset->owner_module, "string");
+  EXPECT_EQ(append->owner_module, "string");
+  EXPECT_EQ(getrange->owner_module, "string");
+  EXPECT_EQ(setrange->owner_module, "string");
+  EXPECT_EQ(getset->owner_module, "string");
+  EXPECT_EQ(incr->owner_module, "string");
+  EXPECT_EQ(decr->owner_module, "string");
+  EXPECT_EQ(incrby->owner_module, "string");
+  EXPECT_EQ(decrby->owner_module, "string");
   EXPECT_EQ(getbit->owner_module, "bitmap");
   EXPECT_EQ(setbit->owner_module, "bitmap");
   EXPECT_EQ(bitcount->owner_module, "bitmap");

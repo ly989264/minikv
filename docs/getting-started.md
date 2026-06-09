@@ -15,7 +15,9 @@ Current user-visible scope:
 
 - supported commands:
   `PING`, `TYPE`, `EXISTS`, `DEL`, `EXPIRE`, `TTL`, `PTTL`, `PERSIST`,
-  `SET`, `GET`, `STRLEN`, `GETBIT`, `SETBIT`, `BITCOUNT`,
+  `SET`, `GET`, `MGET`, `MSET`, `STRLEN`, `APPEND`, `GETRANGE`,
+  `SETRANGE`, `GETSET`, `INCR`, `DECR`, `INCRBY`, `DECRBY`,
+  `GETBIT`, `SETBIT`, `BITCOUNT`,
   `JSON.SET`, `JSON.GET`, `JSON.MGET`, `JSON.DEL`, `JSON.FORGET`,
   `JSON.TYPE`, `JSON.CLEAR`, `JSON.TOGGLE`, `JSON.NUMINCRBY`,
   `HSET`, `HGET`, `HMGET`, `HLEN`, `HEXISTS`, `HGETALL`, `HKEYS`, `HVALS`,
@@ -175,8 +177,10 @@ String and bitmap semantics share one underlying byte value.
 - `BitmapModule` registers `GETBIT`, `SETBIT`, and `BITCOUNT`
 - bitmap commands read and write through `string.bridge` rather than through a
   bitmap-private keyspace
-- `GET`, `SET`, `STRLEN`, `GETBIT`, `SETBIT`, and `BITCOUNT` therefore all
-  operate on the same byte sequence for one string key
+- `GET`, `SET`, `MGET`, `MSET`, `STRLEN`, `APPEND`, `GETRANGE`,
+  `SETRANGE`, `GETSET`, `INCR`, `DECR`, `INCRBY`, `DECRBY`, `GETBIT`,
+  `SETBIT`, and `BITCOUNT` therefore all operate on the same byte sequence
+  for one string key
 
 ### `src/types/hash/*`
 

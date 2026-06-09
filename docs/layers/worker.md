@@ -70,8 +70,8 @@ This means:
 
 - same-key commands serialize
 - different keys may run in parallel
-- current multi-key commands such as `EXISTS` and `DEL` hold all required
-  stripes for the duration of one command
+- current multi-key commands such as `EXISTS`, `DEL`, `MGET`, and `MSET` hold
+  all required stripes for the duration of one command
 - connection-local response order is preserved later by the network layer
 
 `Worker` also catches synchronous exceptions and converts them into

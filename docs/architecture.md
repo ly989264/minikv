@@ -56,7 +56,9 @@ Public behavior is intentionally narrow today:
 
 - supported commands:
   `PING`, `TYPE`, `EXISTS`, `DEL`, `EXPIRE`, `TTL`, `PTTL`, `PERSIST`,
-  `SET`, `GET`, `STRLEN`, `GETBIT`, `SETBIT`, `BITCOUNT`,
+  `SET`, `GET`, `MGET`, `MSET`, `STRLEN`, `APPEND`, `GETRANGE`,
+  `SETRANGE`, `GETSET`, `INCR`, `DECR`, `INCRBY`, `DECRBY`,
+  `GETBIT`, `SETBIT`, `BITCOUNT`,
   `JSON.SET`, `JSON.GET`, `JSON.MGET`, `JSON.DEL`, `JSON.FORGET`,
   `JSON.TYPE`, `JSON.CLEAR`, `JSON.TOGGLE`, `JSON.NUMINCRBY`,
   `HSET`, `HGET`, `HMGET`, `HLEN`, `HEXISTS`, `HGETALL`, `HKEYS`, `HVALS`,
@@ -129,7 +131,8 @@ Current command ownership:
 
 - `CoreModule`: `PING`, `TYPE`, `EXISTS`, `DEL`, `EXPIRE`, `TTL`, `PTTL`,
   `PERSIST`
-- `StringModule`: `SET`, `GET`, `STRLEN`
+- `StringModule`: `SET`, `GET`, `MGET`, `MSET`, `STRLEN`, `APPEND`,
+  `GETRANGE`, `SETRANGE`, `GETSET`, `INCR`, `DECR`, `INCRBY`, `DECRBY`
 - `BitmapModule`: `GETBIT`, `SETBIT`, `BITCOUNT`
 - `HashModule`: `HSET`, `HGET`, `HMGET`, `HLEN`, `HEXISTS`, `HGETALL`,
   `HKEYS`, `HVALS`, `HDEL`
@@ -228,8 +231,8 @@ Current lock-plan shapes:
 - `kNone`: `PING`
 - `kSingle`: most single-key commands such as `TYPE`, `EXPIRE`, `TTL`, `HSET`,
   `JSON.GET`, `ZADD`, `GEOSEARCH`, and `XADD`
-- `kMulti`: multi-key commands such as `EXISTS`, `DEL`, `JSON.MGET`, and
-  `XREAD`
+- `kMulti`: multi-key commands such as `EXISTS`, `DEL`, `MGET`, `MSET`,
+  `JSON.MGET`, and `XREAD`
 
 Benefits of this model:
 

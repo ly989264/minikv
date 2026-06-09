@@ -28,8 +28,8 @@ plus `KeyLockTable`:
   JSON single-key commands, list commands, set commands, zset commands, geo
   commands, and single-key stream commands.
 - multi-key commands acquire a canonicalized set of stripe locks in stable
-  order. Current multi-key commands include `EXISTS`, `DEL`, `JSON.MGET`, and
-  `XREAD`.
+  order. Current multi-key commands include `EXISTS`, `DEL`, `MGET`, `MSET`,
+  `JSON.MGET`, and `XREAD`.
 
 Requests that overlap on the same protected stripes therefore serialize even
 when different workers pick them up. This is the current consistency mechanism;
@@ -43,6 +43,8 @@ Command implementations keep their own argument semantics:
 - `EXISTS key [key ...]` preserves duplicate-key counting semantics.
 - `DEL key [key ...]` deduplicates deletion work so one key is deleted at most
   once per command.
+- `MGET` preserves requested key order in its reply.
+- `MSET` applies key/value pairs atomically and the last repeated key wins.
 - `JSON.MGET` preserves requested key order in its reply.
 - `XREAD` preserves requested stream order in its reply.
 
@@ -143,8 +145,8 @@ boundary remains intentionally narrow:
 - correctness relies on scheduler-layer keyed serialization.
 - logical reads use command-local snapshots.
 - writes use one write batch per logical mutation.
-- limited multi-key semantics exist for `EXISTS`, `DEL`, `JSON.MGET`, and
-  `XREAD`.
+- limited multi-key semantics exist for `EXISTS`, `DEL`, `MGET`, `MSET`,
+  `JSON.MGET`, and `XREAD`.
 - there is still no general transaction interface.
 - modules are builtin-only in the current implementation.
 

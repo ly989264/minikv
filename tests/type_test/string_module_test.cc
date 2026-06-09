@@ -1,5 +1,6 @@
 #include <cstdint>
 #include <filesystem>
+#include <limits>
 #include <memory>
 #include <string>
 #include <unistd.h>
@@ -111,6 +112,16 @@ class StringModuleTest : public ::testing::Test {
         minikv::StorageColumnFamily::kString, data_keyspace.EncodeKey(key),
         &scratch);
     return status.ok();
+  }
+
+  std::string ReadRawStringValue(const std::string& key) const {
+    std::string value;
+    const minikv::ModuleKeyspace data_keyspace("string", "data");
+    EXPECT_TRUE(storage_engine_
+                    ->Get(minikv::StorageColumnFamily::kString,
+                          data_keyspace.EncodeKey(key), &value)
+                    .ok());
+    return value;
   }
 
   minikv::DefaultCoreKeyService MakeKeyService() const {
@@ -318,6 +329,221 @@ TEST_F(StringModuleTest, TombstoneSurvivesReopenAndRecreateBumpsVersion) {
   ASSERT_TRUE(string_module_->GetValue("str:tombstone", &value, &found).ok());
   ASSERT_TRUE(found);
   EXPECT_EQ(value, "fresh");
+}
+
+TEST_F(StringModuleTest, ReplaceClearsTtlWhileBridgeSetPreservesTtl) {
+  minikv::KeyMetadata metadata;
+  metadata.type = minikv::ObjectType::kString;
+  metadata.encoding = minikv::ObjectEncoding::kRaw;
+  metadata.version = 3;
+  metadata.size = 5;
+  metadata.expire_at_ms = current_time_ms_ + 5'000;
+  PutRawMetadata("str:ttl", metadata);
+  PutRawStringValue("str:ttl", "value");
+
+  ASSERT_TRUE(string_module_->SetValue("str:ttl", "bridge").ok());
+  minikv::KeyMetadata after_bridge = ReadRawMetadata("str:ttl");
+  EXPECT_EQ(after_bridge.expire_at_ms, metadata.expire_at_ms);
+  EXPECT_EQ(after_bridge.size, 6U);
+
+  ASSERT_TRUE(string_module_->ReplaceValue("str:ttl", "replace").ok());
+  minikv::KeyMetadata after_replace = ReadRawMetadata("str:ttl");
+  EXPECT_EQ(after_replace.expire_at_ms, 0U);
+  EXPECT_EQ(after_replace.size, 7U);
+  EXPECT_EQ(ReadRawStringValue("str:ttl"), "replace");
+}
+
+TEST_F(StringModuleTest, BatchSetAndGetValuesPreserveRequestOrder) {
+  ASSERT_TRUE(string_module_
+                  ->SetValues({{"str:a", "one"},
+                               {"str:b", "two"},
+                               {"str:a", "final"}})
+                  .ok());
+
+  std::vector<minikv::StringValue> values;
+  ASSERT_TRUE(string_module_
+                  ->GetValues({"str:a", "missing", "str:b", "str:a"},
+                              &values)
+                  .ok());
+  ASSERT_EQ(values.size(), 4U);
+  ASSERT_TRUE(values[0].found);
+  EXPECT_EQ(values[0].value, "final");
+  EXPECT_FALSE(values[1].found);
+  ASSERT_TRUE(values[2].found);
+  EXPECT_EQ(values[2].value, "two");
+  ASSERT_TRUE(values[3].found);
+  EXPECT_EQ(values[3].value, "final");
+}
+
+TEST_F(StringModuleTest, AppendRangeAndSetRangeFollowByteSemantics) {
+  uint64_t length = 0;
+  ASSERT_TRUE(string_module_->AppendValue("str:range", "hello", &length).ok());
+  EXPECT_EQ(length, 5U);
+  ASSERT_TRUE(string_module_->AppendValue("str:range", " world", &length).ok());
+  EXPECT_EQ(length, 11U);
+
+  std::string value;
+  ASSERT_TRUE(string_module_->GetRange("str:range", 0, 4, &value).ok());
+  EXPECT_EQ(value, "hello");
+  ASSERT_TRUE(string_module_->GetRange("str:range", -5, -1, &value).ok());
+  EXPECT_EQ(value, "world");
+  ASSERT_TRUE(string_module_->GetRange("str:range", 50, 60, &value).ok());
+  EXPECT_TRUE(value.empty());
+  ASSERT_TRUE(string_module_->GetRange("missing", 0, -1, &value).ok());
+  EXPECT_TRUE(value.empty());
+
+  ASSERT_TRUE(string_module_->SetRange("str:hole", 3, "xy", &length).ok());
+  EXPECT_EQ(length, 5U);
+  EXPECT_EQ(ReadRawStringValue("str:hole"), std::string("\0\0\0xy", 5));
+
+  ASSERT_TRUE(string_module_->SetRange("str:hole", 1, "A", &length).ok());
+  EXPECT_EQ(length, 5U);
+  EXPECT_EQ(ReadRawStringValue("str:hole"), std::string("\0A\0xy", 5));
+
+  ASSERT_TRUE(string_module_->SetRange("missing:empty", 10, "", &length).ok());
+  EXPECT_EQ(length, 0U);
+  EXPECT_FALSE(HasRawStringValue("missing:empty"));
+}
+
+TEST_F(StringModuleTest, SetRangeRejectsMaterializingTooLargeString) {
+  uint64_t length = 0;
+  const uint64_t offset = 512ULL * 1024ULL * 1024ULL;
+  rocksdb::Status status =
+      string_module_->SetRange("str:huge", offset, "x", &length);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("string size is too large"),
+            std::string::npos);
+}
+
+TEST_F(StringModuleTest, GetSetReturnsOldValueAndClearsTtl) {
+  minikv::KeyMetadata metadata;
+  metadata.type = minikv::ObjectType::kString;
+  metadata.encoding = minikv::ObjectEncoding::kRaw;
+  metadata.version = 9;
+  metadata.size = 3;
+  metadata.expire_at_ms = current_time_ms_ + 10'000;
+  PutRawMetadata("str:getset", metadata);
+  PutRawStringValue("str:getset", "old");
+
+  std::string old_value;
+  bool found = false;
+  ASSERT_TRUE(string_module_
+                  ->GetSetValue("str:getset", "new", &old_value, &found)
+                  .ok());
+  ASSERT_TRUE(found);
+  EXPECT_EQ(old_value, "old");
+  EXPECT_EQ(ReadRawStringValue("str:getset"), "new");
+  EXPECT_EQ(ReadRawMetadata("str:getset").expire_at_ms, 0U);
+
+  ASSERT_TRUE(string_module_
+                  ->GetSetValue("str:missing-getset", "created", &old_value,
+                                &found)
+                  .ok());
+  EXPECT_FALSE(found);
+  EXPECT_TRUE(old_value.empty());
+  EXPECT_EQ(ReadRawStringValue("str:missing-getset"), "created");
+}
+
+TEST_F(StringModuleTest, IntegerMutationsParseAndCheckOverflow) {
+  int64_t value = 0;
+  ASSERT_TRUE(string_module_->IncrementBy("str:int", 5, &value).ok());
+  EXPECT_EQ(value, 5);
+  ASSERT_TRUE(string_module_->DecrementBy("str:int", 2, &value).ok());
+  EXPECT_EQ(value, 3);
+  ASSERT_TRUE(string_module_->DecrementBy("str:int", -4, &value).ok());
+  EXPECT_EQ(value, 7);
+
+  ASSERT_TRUE(string_module_->SetValue("str:not-int", "12x").ok());
+  rocksdb::Status status = string_module_->IncrementBy("str:not-int", 1, &value);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("not an integer"), std::string::npos);
+
+  ASSERT_TRUE(string_module_
+                  ->SetValue("str:max",
+                             std::to_string(std::numeric_limits<int64_t>::max()))
+                  .ok());
+  status = string_module_->IncrementBy("str:max", 1, &value);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("overflow"), std::string::npos);
+
+  ASSERT_TRUE(string_module_
+                  ->SetValue("str:min",
+                             std::to_string(std::numeric_limits<int64_t>::min()))
+                  .ok());
+  status = string_module_->DecrementBy("str:min", 1, &value);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("overflow"), std::string::npos);
+
+  ASSERT_TRUE(string_module_->SetValue("str:minus-one", "-1").ok());
+  ASSERT_TRUE(string_module_
+                  ->DecrementBy("str:minus-one",
+                                std::numeric_limits<int64_t>::min(), &value)
+                  .ok());
+  EXPECT_EQ(value, std::numeric_limits<int64_t>::max());
+}
+
+TEST_F(StringModuleTest, NewMutationsTreatExpiredKeysAsMissing) {
+  minikv::KeyMetadata expired;
+  expired.type = minikv::ObjectType::kString;
+  expired.encoding = minikv::ObjectEncoding::kRaw;
+  expired.version = 4;
+  expired.size = 5;
+  expired.expire_at_ms = current_time_ms_ - 1;
+  PutRawMetadata("str:new-expired", expired);
+  PutRawStringValue("str:new-expired", "stale");
+
+  std::string value;
+  ASSERT_TRUE(string_module_->GetRange("str:new-expired", 0, -1, &value).ok());
+  EXPECT_TRUE(value.empty());
+
+  uint64_t length = 0;
+  ASSERT_TRUE(string_module_->AppendValue("str:new-expired", "fresh", &length)
+                  .ok());
+  EXPECT_EQ(length, 5U);
+  EXPECT_EQ(ReadRawStringValue("str:new-expired"), "fresh");
+  minikv::KeyMetadata rebuilt = ReadRawMetadata("str:new-expired");
+  EXPECT_EQ(rebuilt.version, expired.version + 1);
+  EXPECT_EQ(rebuilt.expire_at_ms, 0U);
+}
+
+TEST_F(StringModuleTest, NewStringOperationsRejectWrongTypeKeys) {
+  minikv::KeyMetadata metadata;
+  metadata.type = minikv::ObjectType::kHash;
+  metadata.encoding = minikv::ObjectEncoding::kHashPlain;
+  metadata.version = 3;
+  PutRawMetadata("str:wrong", metadata);
+
+  std::vector<minikv::StringValue> values;
+  rocksdb::Status status =
+      string_module_->GetValues({"str:wrong"}, &values);
+  ASSERT_TRUE(status.IsInvalidArgument());
+
+  status = string_module_->SetValues({{"str:wrong", "value"}});
+  ASSERT_TRUE(status.IsInvalidArgument());
+
+  uint64_t length = 0;
+  status = string_module_->AppendValue("str:wrong", "x", &length);
+  ASSERT_TRUE(status.IsInvalidArgument());
+
+  std::string value;
+  status = string_module_->GetRange("str:wrong", 0, -1, &value);
+  ASSERT_TRUE(status.IsInvalidArgument());
+
+  status = string_module_->SetRange("str:wrong", 0, "x", &length);
+  ASSERT_TRUE(status.IsInvalidArgument());
+
+  bool found = false;
+  status = string_module_->GetSetValue("str:wrong", "x", &value, &found);
+  ASSERT_TRUE(status.IsInvalidArgument());
+
+  int64_t integer = 0;
+  status = string_module_->IncrementBy("str:wrong", 1, &integer);
+  ASSERT_TRUE(status.IsInvalidArgument());
+
+  status = string_module_->DecrementBy("str:wrong", 1, &integer);
+  ASSERT_TRUE(status.IsInvalidArgument());
+
+  EXPECT_NE(status.ToString().find("key type mismatch"), std::string::npos);
 }
 
 }  // namespace

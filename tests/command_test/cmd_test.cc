@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <filesystem>
+#include <limits>
 #include <memory>
 #include <string>
 #include <unistd.h>
@@ -47,6 +48,20 @@ void ExpectBulkStringArray(const minikv::ReplyNode& reply,
   for (size_t i = 0; i < values.size(); ++i) {
     EXPECT_TRUE(reply.array()[i].IsBulkString());
     EXPECT_EQ(reply.array()[i].string(), values[i]);
+  }
+}
+
+void ExpectBulkOrNullArray(const minikv::ReplyNode& reply,
+                           const std::vector<minikv::StringValue>& values) {
+  ASSERT_TRUE(reply.IsArray());
+  ASSERT_EQ(reply.array().size(), values.size());
+  for (size_t i = 0; i < values.size(); ++i) {
+    if (values[i].found) {
+      ASSERT_TRUE(reply.array()[i].IsBulkString());
+      EXPECT_EQ(reply.array()[i].string(), values[i].value);
+    } else {
+      EXPECT_TRUE(reply.array()[i].IsNull());
+    }
   }
 }
 
@@ -412,6 +427,66 @@ TEST_F(ModuleRuntimeTest, FindsRegisteredCommandsByName) {
   EXPECT_EQ(strlen->name, "STRLEN");
   EXPECT_EQ(strlen->owner_module, "string");
   ExpectFlags(strlen->flags, true, false, true, false);
+
+  const minikv::CmdRegistration* mget = registry().Find("MGET");
+  ASSERT_NE(mget, nullptr);
+  EXPECT_EQ(mget->name, "MGET");
+  EXPECT_EQ(mget->owner_module, "string");
+  ExpectFlags(mget->flags, true, false, true, false);
+
+  const minikv::CmdRegistration* mset = registry().Find("MSET");
+  ASSERT_NE(mset, nullptr);
+  EXPECT_EQ(mset->name, "MSET");
+  EXPECT_EQ(mset->owner_module, "string");
+  ExpectFlags(mset->flags, false, true, false, true);
+
+  const minikv::CmdRegistration* append = registry().Find("APPEND");
+  ASSERT_NE(append, nullptr);
+  EXPECT_EQ(append->name, "APPEND");
+  EXPECT_EQ(append->owner_module, "string");
+  ExpectFlags(append->flags, false, true, true, false);
+
+  const minikv::CmdRegistration* getrange = registry().Find("GETRANGE");
+  ASSERT_NE(getrange, nullptr);
+  EXPECT_EQ(getrange->name, "GETRANGE");
+  EXPECT_EQ(getrange->owner_module, "string");
+  ExpectFlags(getrange->flags, true, false, false, true);
+
+  const minikv::CmdRegistration* setrange = registry().Find("SETRANGE");
+  ASSERT_NE(setrange, nullptr);
+  EXPECT_EQ(setrange->name, "SETRANGE");
+  EXPECT_EQ(setrange->owner_module, "string");
+  ExpectFlags(setrange->flags, false, true, false, true);
+
+  const minikv::CmdRegistration* getset = registry().Find("GETSET");
+  ASSERT_NE(getset, nullptr);
+  EXPECT_EQ(getset->name, "GETSET");
+  EXPECT_EQ(getset->owner_module, "string");
+  ExpectFlags(getset->flags, false, true, true, false);
+
+  const minikv::CmdRegistration* incr = registry().Find("INCR");
+  ASSERT_NE(incr, nullptr);
+  EXPECT_EQ(incr->name, "INCR");
+  EXPECT_EQ(incr->owner_module, "string");
+  ExpectFlags(incr->flags, false, true, true, false);
+
+  const minikv::CmdRegistration* decr = registry().Find("DECR");
+  ASSERT_NE(decr, nullptr);
+  EXPECT_EQ(decr->name, "DECR");
+  EXPECT_EQ(decr->owner_module, "string");
+  ExpectFlags(decr->flags, false, true, true, false);
+
+  const minikv::CmdRegistration* incrby = registry().Find("INCRBY");
+  ASSERT_NE(incrby, nullptr);
+  EXPECT_EQ(incrby->name, "INCRBY");
+  EXPECT_EQ(incrby->owner_module, "string");
+  ExpectFlags(incrby->flags, false, true, true, false);
+
+  const minikv::CmdRegistration* decrby = registry().Find("DECRBY");
+  ASSERT_NE(decrby, nullptr);
+  EXPECT_EQ(decrby->name, "DECRBY");
+  EXPECT_EQ(decrby->owner_module, "string");
+  ExpectFlags(decrby->flags, false, true, true, false);
 
   const minikv::CmdRegistration* getbit = registry().Find("GETBIT");
   ASSERT_NE(getbit, nullptr);
@@ -918,6 +993,64 @@ TEST_F(ModuleRuntimeTest, CreatesCommandsFromRespParts) {
   ASSERT_NE(lower_string, nullptr);
   EXPECT_EQ(lower_string->Name(), "GET");
 
+  std::unique_ptr<minikv::Cmd> mget;
+  ASSERT_TRUE(minikv::CreateCmd(registry(),
+                                {"MGET", "str:3", "str:1", "str:2", "str:1"},
+                                &mget)
+                  .ok());
+  ASSERT_NE(mget, nullptr);
+  EXPECT_EQ(mget->Name(), "MGET");
+  EXPECT_TRUE(mget->RouteKey().empty());
+  ExpectLockPlan(mget->lock_plan(), minikv::Cmd::LockPlan::Kind::kMulti, "",
+                 {"str:1", "str:2", "str:3"});
+  ExpectFlags(mget->Flags(), true, false, true, false);
+
+  std::unique_ptr<minikv::Cmd> mset;
+  ASSERT_TRUE(minikv::CreateCmd(registry(),
+                                {"MSET", "str:3", "v3", "str:1", "v1",
+                                 "str:2", "v2", "str:1", "last"},
+                                &mset)
+                  .ok());
+  ASSERT_NE(mset, nullptr);
+  EXPECT_EQ(mset->Name(), "MSET");
+  EXPECT_TRUE(mset->RouteKey().empty());
+  ExpectLockPlan(mset->lock_plan(), minikv::Cmd::LockPlan::Kind::kMulti, "",
+                 {"str:1", "str:2", "str:3"});
+  ExpectFlags(mset->Flags(), false, true, false, true);
+
+  struct StringSingleKeyCreateCase {
+    std::vector<std::string> parts;
+    std::string name;
+    bool read;
+    bool write;
+    bool fast;
+    bool slow;
+  };
+  const std::vector<StringSingleKeyCreateCase> string_cases = {
+      {{"APPEND", "str:1", "x"}, "APPEND", false, true, true, false},
+      {{"GETRANGE", "str:1", "0", "-1"}, "GETRANGE", true, false, false,
+       true},
+      {{"SETRANGE", "str:1", "2", "x"}, "SETRANGE", false, true, false,
+       true},
+      {{"GETSET", "str:1", "x"}, "GETSET", false, true, true, false},
+      {{"INCR", "str:1"}, "INCR", false, true, true, false},
+      {{"DECR", "str:1"}, "DECR", false, true, true, false},
+      {{"INCRBY", "str:1", "2"}, "INCRBY", false, true, true, false},
+      {{"DECRBY", "str:1", "2"}, "DECRBY", false, true, true, false},
+  };
+  for (const auto& test_case : string_cases) {
+    std::unique_ptr<minikv::Cmd> string_cmd;
+    ASSERT_TRUE(minikv::CreateCmd(registry(), test_case.parts, &string_cmd)
+                    .ok());
+    ASSERT_NE(string_cmd, nullptr);
+    EXPECT_EQ(string_cmd->Name(), test_case.name);
+    EXPECT_EQ(string_cmd->RouteKey(), "str:1");
+    ExpectLockPlan(string_cmd->lock_plan(),
+                   minikv::Cmd::LockPlan::Kind::kSingle, "str:1", {});
+    ExpectFlags(string_cmd->Flags(), test_case.read, test_case.write,
+                test_case.fast, test_case.slow);
+  }
+
   std::unique_ptr<minikv::Cmd> getbit;
   ASSERT_TRUE(
       minikv::CreateCmd(registry(), {"GETBIT", "str:1", "7"}, &getbit).ok());
@@ -1226,6 +1359,81 @@ TEST_F(ModuleRuntimeTest, RejectsBadArgumentsAndNullOutputs) {
   status = minikv::CreateCmd(registry(), {"STRLEN", "str:1", "extra"}, &cmd);
   ASSERT_TRUE(status.IsInvalidArgument());
   EXPECT_NE(status.ToString().find("STRLEN takes no extra arguments"),
+            std::string::npos);
+
+  status = minikv::CreateCmd(registry(), {"MGET"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("missing key"), std::string::npos);
+
+  status = minikv::CreateCmd(registry(), {"MSET", "str:1"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("key/value pairs"), std::string::npos);
+
+  status =
+      minikv::CreateCmd(registry(), {"MSET", "str:1", "v1", "str:2"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("key/value pairs"), std::string::npos);
+
+  status = minikv::CreateCmd(registry(), {"APPEND", "str:1"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("APPEND requires value"),
+            std::string::npos);
+
+  status = minikv::CreateCmd(registry(), {"GETRANGE", "str:1", "0"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("GETRANGE requires start and end"),
+            std::string::npos);
+
+  status =
+      minikv::CreateCmd(registry(), {"GETRANGE", "str:1", "bad", "1"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("integer start and end"),
+            std::string::npos);
+
+  status = minikv::CreateCmd(registry(), {"SETRANGE", "str:1", "0"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("SETRANGE requires offset and value"),
+            std::string::npos);
+
+  status =
+      minikv::CreateCmd(registry(), {"SETRANGE", "str:1", "-1", "x"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("non-negative integer offset"),
+            std::string::npos);
+
+  status = minikv::CreateCmd(registry(), {"GETSET", "str:1"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("GETSET requires value"),
+            std::string::npos);
+
+  status = minikv::CreateCmd(registry(), {"INCR", "str:1", "extra"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("INCR takes no extra arguments"),
+            std::string::npos);
+
+  status = minikv::CreateCmd(registry(), {"DECR", "str:1", "extra"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("DECR takes no extra arguments"),
+            std::string::npos);
+
+  status = minikv::CreateCmd(registry(), {"INCRBY", "str:1"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("INCRBY requires increment"),
+            std::string::npos);
+
+  status = minikv::CreateCmd(registry(), {"INCRBY", "str:1", "bad"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("INCRBY requires integer increment"),
+            std::string::npos);
+
+  status = minikv::CreateCmd(registry(), {"DECRBY", "str:1"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("DECRBY requires increment"),
+            std::string::npos);
+
+  status = minikv::CreateCmd(registry(), {"DECRBY", "str:1", "bad"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("DECRBY requires integer increment"),
             std::string::npos);
 
   status = minikv::CreateCmd(registry(), {"GETBIT", "str:1"}, &cmd);
@@ -2029,6 +2237,141 @@ TEST_F(ModuleRuntimeTest, StringCommandsExecuteAgainstEngine) {
   ASSERT_TRUE(response.status.ok());
   ASSERT_TRUE(response.reply.IsInteger());
   EXPECT_EQ(response.reply.integer(), 0);
+
+  response = CreateFromParts({"MSET", "str:a", "one", "str:b", "two",
+                              "str:a", "final"})
+                 ->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsSimpleString());
+  EXPECT_EQ(response.reply.string(), "OK");
+
+  response = CreateFromParts({"MGET", "str:a", "missing", "str:b", "str:a"})
+                 ->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ExpectBulkOrNullArray(response.reply,
+                        {{true, "final"}, {false, ""}, {true, "two"},
+                         {true, "final"}});
+
+  response = CreateFromParts({"APPEND", "str:a", "-tail"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsInteger());
+  EXPECT_EQ(response.reply.integer(), 10);
+
+  response = CreateFromParts({"GETRANGE", "str:a", "0", "4"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ExpectBulkString(response.reply, "final");
+
+  response = CreateFromParts({"GETRANGE", "str:a", "-4", "-1"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ExpectBulkString(response.reply, "tail");
+
+  response = CreateFromParts({"SETRANGE", "str:range", "2", "xy"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsInteger());
+  EXPECT_EQ(response.reply.integer(), 4);
+
+  response = CreateFromParts({"GET", "str:range"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ExpectBulkString(response.reply, std::string("\0\0xy", 4));
+
+  response = CreateFromParts({"GETSET", "str:a", "reset"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ExpectBulkString(response.reply, "final-tail");
+
+  response = CreateFromParts({"GETSET", "str:missing-getset", "created"})
+                 ->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsNull());
+
+  response = CreateFromParts({"INCR", "str:int"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsInteger());
+  EXPECT_EQ(response.reply.integer(), 1);
+
+  response = CreateFromParts({"INCRBY", "str:int", "41"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsInteger());
+  EXPECT_EQ(response.reply.integer(), 42);
+
+  response = CreateFromParts({"DECR", "str:int"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsInteger());
+  EXPECT_EQ(response.reply.integer(), 41);
+
+  response = CreateFromParts({"DECRBY", "str:int", "-1"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsInteger());
+  EXPECT_EQ(response.reply.integer(), 42);
+
+  response = CreateFromParts({"SET", "str:not-int", "12x"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  response = CreateFromParts({"INCR", "str:not-int"})->Execute();
+  ASSERT_TRUE(response.status.IsInvalidArgument());
+  EXPECT_NE(response.status.ToString().find("not an integer"),
+            std::string::npos);
+
+  response = CreateFromParts({"SET", "str:max",
+                              std::to_string(
+                                  std::numeric_limits<int64_t>::max())})
+                 ->Execute();
+  ASSERT_TRUE(response.status.ok());
+  response = CreateFromParts({"INCR", "str:max"})->Execute();
+  ASSERT_TRUE(response.status.IsInvalidArgument());
+  EXPECT_NE(response.status.ToString().find("overflow"), std::string::npos);
+}
+
+TEST_F(ModuleRuntimeTest, StringReplacementClearsTtlButMutationsPreserveTtl) {
+  minikv::CommandResponse response =
+      CreateFromParts({"SET", "str:ttl", "value"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+
+  response = CreateFromParts({"EXPIRE", "str:ttl", "5"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  EXPECT_EQ(response.reply.integer(), 1);
+
+  response = CreateFromParts({"APPEND", "str:ttl", "!"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  response = CreateFromParts({"TTL", "str:ttl"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  EXPECT_EQ(response.reply.integer(), 5);
+
+  response = CreateFromParts({"SETRANGE", "str:ttl", "0", "V"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  response = CreateFromParts({"TTL", "str:ttl"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  EXPECT_EQ(response.reply.integer(), 5);
+
+  response = CreateFromParts({"INCR", "str:ttl-int"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  response = CreateFromParts({"EXPIRE", "str:ttl-int", "5"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  response = CreateFromParts({"INCRBY", "str:ttl-int", "1"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  response = CreateFromParts({"TTL", "str:ttl-int"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  EXPECT_EQ(response.reply.integer(), 5);
+
+  response = CreateFromParts({"SET", "str:ttl", "replace"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  response = CreateFromParts({"TTL", "str:ttl"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  EXPECT_EQ(response.reply.integer(), -1);
+
+  response = CreateFromParts({"EXPIRE", "str:ttl", "5"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  response = CreateFromParts({"GETSET", "str:ttl", "getset"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  response = CreateFromParts({"TTL", "str:ttl"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  EXPECT_EQ(response.reply.integer(), -1);
+
+  response = CreateFromParts({"EXPIRE", "str:ttl", "5"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  response = CreateFromParts({"MSET", "str:ttl", "mset"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  response = CreateFromParts({"TTL", "str:ttl"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  EXPECT_EQ(response.reply.integer(), -1);
 }
 
 TEST_F(ModuleRuntimeTest, BitmapCommandsShareStringBytesWithStringCommands) {
@@ -2617,6 +2960,34 @@ TEST_F(ModuleRuntimeTest, StringCommandsOnMissingKeyReturnEmptySuccess) {
   ASSERT_TRUE(response.reply.IsInteger());
   EXPECT_EQ(response.reply.integer(), 0);
 
+  response =
+      CreateFromParts({"MGET", "missing-string", "missing-string-2"})
+          ->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ExpectBulkOrNullArray(response.reply, {{false, ""}, {false, ""}});
+
+  response = CreateFromParts({"GETRANGE", "missing-string", "0", "-1"})
+                 ->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ExpectBulkString(response.reply, "");
+
+  response = CreateFromParts({"SETRANGE", "missing-string-empty", "5", ""})
+                 ->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsInteger());
+  EXPECT_EQ(response.reply.integer(), 0);
+
+  response = CreateFromParts({"GETSET", "missing-string-getset", "created"})
+                 ->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsNull());
+
+  response = CreateFromParts({"INCRBY", "missing-string-int", "3"})
+                 ->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsInteger());
+  EXPECT_EQ(response.reply.integer(), 3);
+
   response = CreateFromParts({"GETBIT", "missing-string", "9"})->Execute();
   ASSERT_TRUE(response.status.ok());
   ASSERT_TRUE(response.reply.IsInteger());
@@ -2892,6 +3263,53 @@ TEST_F(ModuleRuntimeTest, StringCommandsRejectWrongTypeKeys) {
             std::string::npos);
 
   response = CreateFromParts({"STRLEN", "user:string-wrong"})->Execute();
+  ASSERT_TRUE(response.status.IsInvalidArgument());
+  EXPECT_NE(response.status.ToString().find("key type mismatch"),
+            std::string::npos);
+
+  response = CreateFromParts({"MGET", "user:string-wrong"})->Execute();
+  ASSERT_TRUE(response.status.IsInvalidArgument());
+  EXPECT_NE(response.status.ToString().find("key type mismatch"),
+            std::string::npos);
+
+  response =
+      CreateFromParts({"MSET", "user:string-wrong", "value"})->Execute();
+  ASSERT_TRUE(response.status.IsInvalidArgument());
+  EXPECT_NE(response.status.ToString().find("key type mismatch"),
+            std::string::npos);
+
+  response =
+      CreateFromParts({"APPEND", "user:string-wrong", "value"})->Execute();
+  ASSERT_TRUE(response.status.IsInvalidArgument());
+  EXPECT_NE(response.status.ToString().find("key type mismatch"),
+            std::string::npos);
+
+  response =
+      CreateFromParts({"GETRANGE", "user:string-wrong", "0", "-1"})
+          ->Execute();
+  ASSERT_TRUE(response.status.IsInvalidArgument());
+  EXPECT_NE(response.status.ToString().find("key type mismatch"),
+            std::string::npos);
+
+  response =
+      CreateFromParts({"SETRANGE", "user:string-wrong", "0", "x"})
+          ->Execute();
+  ASSERT_TRUE(response.status.IsInvalidArgument());
+  EXPECT_NE(response.status.ToString().find("key type mismatch"),
+            std::string::npos);
+
+  response =
+      CreateFromParts({"GETSET", "user:string-wrong", "value"})->Execute();
+  ASSERT_TRUE(response.status.IsInvalidArgument());
+  EXPECT_NE(response.status.ToString().find("key type mismatch"),
+            std::string::npos);
+
+  response = CreateFromParts({"INCR", "user:string-wrong"})->Execute();
+  ASSERT_TRUE(response.status.IsInvalidArgument());
+  EXPECT_NE(response.status.ToString().find("key type mismatch"),
+            std::string::npos);
+
+  response = CreateFromParts({"DECRBY", "user:string-wrong", "1"})->Execute();
   ASSERT_TRUE(response.status.IsInvalidArgument());
   EXPECT_NE(response.status.ToString().find("key type mismatch"),
             std::string::npos);
