@@ -38,13 +38,38 @@ class SetModule : public Module, public WholeKeyDeleteHandler {
                               std::vector<std::string>* out);
   rocksdb::Status IsMember(const std::string& key, const std::string& member,
                            bool* found);
+  rocksdb::Status IsMembers(const std::string& key,
+                            const std::vector<std::string>& members,
+                            std::vector<bool>* found);
   rocksdb::Status RemoveMembers(const std::string& key,
                                 const std::vector<std::string>& members,
                                 uint64_t* removed_count);
+  rocksdb::Status MoveMember(const std::string& source,
+                             const std::string& destination,
+                             const std::string& member, bool* moved);
+  rocksdb::Status Union(const std::vector<std::string>& keys,
+                        std::vector<std::string>* out);
+  rocksdb::Status Intersection(const std::vector<std::string>& keys,
+                               std::vector<std::string>* out);
+  rocksdb::Status Difference(const std::vector<std::string>& keys,
+                             std::vector<std::string>* out);
+  rocksdb::Status StoreUnion(const std::string& destination,
+                             const std::vector<std::string>& keys,
+                             uint64_t* stored_count);
+  rocksdb::Status StoreIntersection(const std::string& destination,
+                                    const std::vector<std::string>& keys,
+                                    uint64_t* stored_count);
+  rocksdb::Status StoreDifference(const std::string& destination,
+                                  const std::vector<std::string>& keys,
+                                  uint64_t* stored_count);
   rocksdb::Status RandomMember(const std::string& key, std::string* member,
                                bool* found);
+  rocksdb::Status RandomMembers(const std::string& key, int64_t count,
+                                std::vector<std::string>* members);
   rocksdb::Status PopRandomMember(const std::string& key, std::string* member,
                                   bool* found);
+  rocksdb::Status PopRandomMembers(const std::string& key, uint64_t count,
+                                   std::vector<std::string>* members);
 
  private:
   rocksdb::Status EnsureReady() const;

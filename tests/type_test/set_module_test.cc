@@ -86,7 +86,9 @@ class SetModuleTest : public ::testing::Test {
     auto set_module = std::make_unique<minikv::SetModule>();
     set_module_ = set_module.get();
     modules.push_back(std::move(set_module));
-    modules.push_back(std::make_unique<minikv::ListModule>());
+    auto list_module = std::make_unique<minikv::ListModule>();
+    list_module_ = list_module.get();
+    modules.push_back(std::move(list_module));
     module_manager_ = std::make_unique<minikv::ModuleManager>(
         storage_engine_.get(), scheduler_.get(), std::move(modules));
     ASSERT_TRUE(module_manager_->Initialize().ok());
@@ -96,6 +98,7 @@ class SetModuleTest : public ::testing::Test {
     module_manager_.reset();
     scheduler_.reset();
     set_module_ = nullptr;
+    list_module_ = nullptr;
     storage_engine_.reset();
   }
 
@@ -185,6 +188,7 @@ class SetModuleTest : public ::testing::Test {
   std::unique_ptr<minikv::ModuleManager> module_manager_;
   std::unique_ptr<minikv::StorageEngine> storage_engine_;
   minikv::SetModule* set_module_ = nullptr;
+  minikv::ListModule* list_module_ = nullptr;
 };
 
 TEST_F(SetModuleTest, AddMembersReadMembersAndMembership) {
@@ -208,6 +212,126 @@ TEST_F(SetModuleTest, AddMembersReadMembersAndMembership) {
   EXPECT_TRUE(found);
   ASSERT_TRUE(set_module_->IsMember("set:1", "dave", &found).ok());
   EXPECT_FALSE(found);
+
+  std::vector<bool> found_many;
+  ASSERT_TRUE(
+      set_module_->IsMembers("set:1", {"alice", "dave", "alice"}, &found_many)
+          .ok());
+  ASSERT_EQ(found_many.size(), 3U);
+  EXPECT_TRUE(found_many[0]);
+  EXPECT_FALSE(found_many[1]);
+  EXPECT_TRUE(found_many[2]);
+}
+
+TEST_F(SetModuleTest, SetCombinationOperationsTreatMissingAsEmpty) {
+  ASSERT_TRUE(set_module_->AddMembers("set:a", {"a", "b", "c"}, nullptr).ok());
+  ASSERT_TRUE(set_module_->AddMembers("set:b", {"b", "c", "d"}, nullptr).ok());
+  ASSERT_TRUE(set_module_->AddMembers("set:c", {"c", "e"}, nullptr).ok());
+
+  std::vector<std::string> members;
+  ASSERT_TRUE(set_module_->Union({"set:a", "set:b", "missing"}, &members).ok());
+  ExpectMembersUnordered(members, {"a", "b", "c", "d"});
+
+  ASSERT_TRUE(set_module_->Intersection({"set:a", "set:b", "set:c"}, &members)
+                  .ok());
+  ExpectMembersUnordered(members, {"c"});
+
+  ASSERT_TRUE(set_module_->Intersection({"set:a", "missing"}, &members).ok());
+  EXPECT_TRUE(members.empty());
+
+  ASSERT_TRUE(set_module_->Difference({"set:a", "set:b"}, &members).ok());
+  ExpectMembersUnordered(members, {"a"});
+
+  ASSERT_TRUE(set_module_->Difference({"missing", "set:a"}, &members).ok());
+  EXPECT_TRUE(members.empty());
+}
+
+TEST_F(SetModuleTest, MoveMemberUpdatesSourceAndDestinationAtomically) {
+  ASSERT_TRUE(set_module_->AddMembers("set:src", {"a", "b"}, nullptr).ok());
+  ASSERT_TRUE(set_module_->AddMembers("set:dst", {"b", "c"}, nullptr).ok());
+
+  bool moved = false;
+  ASSERT_TRUE(set_module_->MoveMember("set:src", "set:dst", "a", &moved).ok());
+  EXPECT_TRUE(moved);
+
+  std::vector<std::string> members;
+  ASSERT_TRUE(set_module_->ReadMembers("set:src", &members).ok());
+  ExpectMembersUnordered(members, {"b"});
+  ASSERT_TRUE(set_module_->ReadMembers("set:dst", &members).ok());
+  ExpectMembersUnordered(members, {"a", "b", "c"});
+
+  ASSERT_TRUE(set_module_->MoveMember("set:src", "set:dst", "b", &moved).ok());
+  EXPECT_TRUE(moved);
+  ASSERT_TRUE(set_module_->ReadMembers("set:src", &members).ok());
+  EXPECT_TRUE(members.empty());
+  ASSERT_TRUE(set_module_->ReadMembers("set:dst", &members).ok());
+  ExpectMembersUnordered(members, {"a", "b", "c"});
+
+  ASSERT_TRUE(
+      set_module_->MoveMember("missing", "set:dst", "x", &moved).ok());
+  EXPECT_FALSE(moved);
+}
+
+TEST_F(SetModuleTest, StoreCombinationOverwritesDestinationAndHandlesEmpty) {
+  ASSERT_TRUE(set_module_->AddMembers("set:a", {"a", "b", "c"}, nullptr).ok());
+  ASSERT_TRUE(set_module_->AddMembers("set:b", {"b", "c", "d"}, nullptr).ok());
+  ASSERT_TRUE(list_module_->PushRight("set:store", {"old"}, nullptr).ok());
+
+  uint64_t stored = 0;
+  ASSERT_TRUE(
+      set_module_->StoreUnion("set:store", {"set:a", "set:b"}, &stored).ok());
+  EXPECT_EQ(stored, 4U);
+
+  minikv::KeyLookup lookup = LookupKey("set:store");
+  ASSERT_EQ(lookup.state, minikv::KeyLifecycleState::kLive);
+  EXPECT_EQ(lookup.metadata.type, minikv::ObjectType::kSet);
+
+  std::vector<std::string> members;
+  ASSERT_TRUE(set_module_->ReadMembers("set:store", &members).ok());
+  ExpectMembersUnordered(members, {"a", "b", "c", "d"});
+
+  ASSERT_TRUE(
+      set_module_->StoreIntersection("set:store", {"set:a", "set:b"}, &stored)
+          .ok());
+  EXPECT_EQ(stored, 2U);
+  ASSERT_TRUE(set_module_->ReadMembers("set:store", &members).ok());
+  ExpectMembersUnordered(members, {"b", "c"});
+
+  ASSERT_TRUE(
+      set_module_->StoreDifference("set:store", {"set:a", "set:a"}, &stored)
+          .ok());
+  EXPECT_EQ(stored, 0U);
+  lookup = LookupKey("set:store");
+  EXPECT_EQ(lookup.state, minikv::KeyLifecycleState::kTombstone);
+  ASSERT_TRUE(set_module_->ReadMembers("set:store", &members).ok());
+  EXPECT_TRUE(members.empty());
+}
+
+TEST_F(SetModuleTest, StoreIntoExpiredDestinationBumpsVersion) {
+  ASSERT_TRUE(set_module_->AddMembers("set:src", {"fresh"}, nullptr).ok());
+
+  minikv::KeyMetadata expired;
+  expired.type = minikv::ObjectType::kSet;
+  expired.encoding = minikv::ObjectEncoding::kSetHashtable;
+  expired.version = 7;
+  expired.size = 1;
+  expired.expire_at_ms = current_time_ms_ - 1;
+  PutRawMetadata("set:expired-store", expired);
+  PutRawSetMember("set:expired-store", expired.version, "stale");
+
+  uint64_t stored = 0;
+  ASSERT_TRUE(set_module_
+                  ->StoreUnion("set:expired-store", {"set:src"}, &stored)
+                  .ok());
+  EXPECT_EQ(stored, 1U);
+
+  const minikv::KeyMetadata rebuilt = ReadRawMetadata("set:expired-store");
+  EXPECT_EQ(rebuilt.version, 8U);
+  EXPECT_EQ(rebuilt.expire_at_ms, 0U);
+
+  std::vector<std::string> members;
+  ASSERT_TRUE(set_module_->ReadMembers("set:expired-store", &members).ok());
+  ExpectMembersUnordered(members, {"fresh"});
 }
 
 TEST_F(SetModuleTest, RemoveMembersWritesTombstoneAfterLastDelete) {
@@ -304,8 +428,28 @@ TEST_F(SetModuleTest, NonSetMetadataStillReturnsTypeMismatch) {
   ASSERT_TRUE(status.IsInvalidArgument());
   EXPECT_NE(status.ToString().find("key type mismatch"), std::string::npos);
 
+  std::vector<bool> found_many;
+  status = set_module_->IsMembers("set:string", {"member"}, &found_many);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("key type mismatch"), std::string::npos);
+
   uint64_t removed = 0;
   status = set_module_->RemoveMembers("set:string", {"member"}, &removed);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("key type mismatch"), std::string::npos);
+
+  bool moved = false;
+  status = set_module_->MoveMember("set:string", "set:dst", "member", &moved);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("key type mismatch"), std::string::npos);
+
+  std::vector<std::string> members_out;
+  status = set_module_->Union({"set:string"}, &members_out);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("key type mismatch"), std::string::npos);
+
+  uint64_t stored = 0;
+  status = set_module_->StoreUnion("set:dst", {"set:string"}, &stored);
   ASSERT_TRUE(status.IsInvalidArgument());
   EXPECT_NE(status.ToString().find("key type mismatch"), std::string::npos);
 
@@ -314,7 +458,15 @@ TEST_F(SetModuleTest, NonSetMetadataStillReturnsTypeMismatch) {
   ASSERT_TRUE(status.IsInvalidArgument());
   EXPECT_NE(status.ToString().find("key type mismatch"), std::string::npos);
 
+  status = set_module_->RandomMembers("set:string", 2, &members_out);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("key type mismatch"), std::string::npos);
+
   status = set_module_->PopRandomMember("set:string", &member, &found);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("key type mismatch"), std::string::npos);
+
+  status = set_module_->PopRandomMembers("set:string", 2, &members_out);
   ASSERT_TRUE(status.IsInvalidArgument());
   EXPECT_NE(status.ToString().find("key type mismatch"), std::string::npos);
 }

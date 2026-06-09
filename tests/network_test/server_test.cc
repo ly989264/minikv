@@ -73,6 +73,16 @@ void ExpectArrayTextsUnordered(const RespValue& value,
   EXPECT_EQ(actual_sorted, expected_sorted);
 }
 
+void ExpectArrayIntegers(const RespValue& value,
+                         const std::vector<long long>& expected) {
+  ASSERT_EQ(value.type, RespValue::Type::kArray);
+  ASSERT_EQ(value.array.size(), expected.size());
+  for (size_t i = 0; i < expected.size(); ++i) {
+    ASSERT_EQ(value.array[i].type, RespValue::Type::kInteger);
+    EXPECT_EQ(value.array[i].integer, expected[i]);
+  }
+}
+
 void ExpectStreamFieldArray(const RespValue& value,
                             const std::vector<std::string>& expected) {
   ASSERT_EQ(value.type, RespValue::Type::kArray);
@@ -463,6 +473,47 @@ TEST_F(MiniKVServerTest, SetLifecycleAndRandomCommandsWorkOverNetwork) {
   WriteAll(fd, EncodeCommand({"SMEMBERS", "set:1"}));
   reply = ReadRespValue(fd);
   ExpectArrayTextsUnordered(reply, {"a", "b", "c"});
+
+  WriteAll(fd, EncodeCommand({"SMISMEMBER", "set:1", "a", "x", "a"}));
+  reply = ReadRespValue(fd);
+  ExpectArrayIntegers(reply, {1, 0, 1});
+
+  WriteAll(fd, EncodeCommand({"SADD", "set:2", "c", "d"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kInteger);
+  ASSERT_EQ(reply.integer, 2);
+
+  WriteAll(fd, EncodeCommand({"SUNION", "set:1", "set:2"}));
+  reply = ReadRespValue(fd);
+  ExpectArrayTextsUnordered(reply, {"a", "b", "c", "d"});
+
+  WriteAll(fd, EncodeCommand({"SINTERSTORE", "set:store", "set:1", "set:2"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kInteger);
+  ASSERT_EQ(reply.integer, 1);
+
+  WriteAll(fd, EncodeCommand({"SMEMBERS", "set:store"}));
+  reply = ReadRespValue(fd);
+  ExpectArrayTextsUnordered(reply, {"c"});
+
+  WriteAll(fd, EncodeCommand({"SMOVE", "set:2", "set:store", "d"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kInteger);
+  ASSERT_EQ(reply.integer, 1);
+
+  WriteAll(fd, EncodeCommand({"SMEMBERS", "set:store"}));
+  reply = ReadRespValue(fd);
+  ExpectArrayTextsUnordered(reply, {"c", "d"});
+
+  WriteAll(fd, EncodeCommand({"SRANDMEMBER", "set:1", "2"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kArray);
+  ASSERT_EQ(reply.array.size(), 2U);
+
+  WriteAll(fd, EncodeCommand({"SPOP", "set:2", "1"}));
+  reply = ReadRespValue(fd);
+  ASSERT_EQ(reply.type, RespValue::Type::kArray);
+  ASSERT_EQ(reply.array.size(), 1U);
 
   WriteAll(fd, EncodeCommand({"SRANDMEMBER", "set:1"}));
   reply = ReadRespValue(fd);

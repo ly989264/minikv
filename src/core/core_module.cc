@@ -57,21 +57,16 @@ uint64_t ComputeExpireAtMs(uint64_t now_ms, int64_t ttl_seconds) {
   return now_ms + ttl_ms;
 }
 
-rocksdb::Status DeleteLiveKey(CoreModule* module, ModuleSnapshot* snapshot,
+rocksdb::Status DeleteLiveKey(WholeKeyDeleteRegistry* delete_registry,
+                              ModuleSnapshot* snapshot,
                               ModuleWriteBatch* write_batch,
                               const std::string& key,
                               const KeyLookup& lookup) {
-  if (module == nullptr) {
+  if (delete_registry == nullptr) {
     return rocksdb::Status::InvalidArgument(
         "core delete services are unavailable");
   }
-
-  WholeKeyDeleteHandler* handler = module->FindHandler(lookup.metadata.type);
-  if (handler == nullptr) {
-    return rocksdb::Status::InvalidArgument(
-        "DEL is unsupported for key type");
-  }
-  return handler->DeleteWholeKey(snapshot, write_batch, key, lookup);
+  return delete_registry->DeleteWholeKey(snapshot, write_batch, key, lookup);
 }
 
 class PingCmd : public Cmd {
@@ -181,11 +176,12 @@ class ExistsCmd : public Cmd {
 class DelCmd : public Cmd {
  public:
   DelCmd(const CmdRegistration& registration, ModuleServices* services,
-         const CoreKeyService* key_service, CoreModule* module)
+         const CoreKeyService* key_service,
+         WholeKeyDeleteRegistry* delete_registry)
       : Cmd(registration.name, registration.flags),
         services_(services),
         key_service_(key_service),
-        module_(module) {}
+        delete_registry_(delete_registry) {}
 
  private:
   rocksdb::Status DoInitial(const CmdInput& input) override {
@@ -198,7 +194,8 @@ class DelCmd : public Cmd {
   }
 
   CommandResponse Do() override {
-    if (services_ == nullptr || key_service_ == nullptr || module_ == nullptr) {
+    if (services_ == nullptr || key_service_ == nullptr ||
+        delete_registry_ == nullptr) {
       return MakeStatus(
           rocksdb::Status::InvalidArgument("core delete services are unavailable"));
     }
@@ -224,8 +221,8 @@ class DelCmd : public Cmd {
         continue;
       }
 
-      status =
-          DeleteLiveKey(module_, snapshot.get(), write_batch.get(), key, lookup);
+      status = DeleteLiveKey(delete_registry_, snapshot.get(),
+                             write_batch.get(), key, lookup);
       if (!status.ok()) {
         return MakeStatus(std::move(status));
       }
@@ -245,18 +242,19 @@ class DelCmd : public Cmd {
 
   ModuleServices* services_ = nullptr;
   const CoreKeyService* key_service_ = nullptr;
-  CoreModule* module_ = nullptr;
+  WholeKeyDeleteRegistry* delete_registry_ = nullptr;
   std::vector<std::string> keys_;
 };
 
 class ExpireCmd : public Cmd {
  public:
   ExpireCmd(const CmdRegistration& registration, ModuleServices* services,
-            const CoreKeyService* key_service, CoreModule* module)
+            const CoreKeyService* key_service,
+            WholeKeyDeleteRegistry* delete_registry)
       : Cmd(registration.name, registration.flags),
         services_(services),
         key_service_(key_service),
-        module_(module) {}
+        delete_registry_(delete_registry) {}
 
  private:
   rocksdb::Status DoInitial(const CmdInput& input) override {
@@ -276,7 +274,8 @@ class ExpireCmd : public Cmd {
   }
 
   CommandResponse Do() override {
-    if (services_ == nullptr || key_service_ == nullptr || module_ == nullptr) {
+    if (services_ == nullptr || key_service_ == nullptr ||
+        delete_registry_ == nullptr) {
       return MakeStatus(
           rocksdb::Status::InvalidArgument("core expire services are unavailable"));
     }
@@ -294,8 +293,8 @@ class ExpireCmd : public Cmd {
     std::unique_ptr<ModuleWriteBatch> write_batch =
         services_->storage().CreateWriteBatch();
     if (ttl_seconds_ <= 0) {
-      status = DeleteLiveKey(module_, snapshot.get(), write_batch.get(), key_,
-                             lookup);
+      status = DeleteLiveKey(delete_registry_, snapshot.get(),
+                             write_batch.get(), key_, lookup);
     } else {
       KeyMetadata metadata = lookup.metadata;
       metadata.expire_at_ms =
@@ -315,7 +314,7 @@ class ExpireCmd : public Cmd {
 
   ModuleServices* services_ = nullptr;
   const CoreKeyService* key_service_ = nullptr;
-  CoreModule* module_ = nullptr;
+  WholeKeyDeleteRegistry* delete_registry_ = nullptr;
   std::string key_;
   int64_t ttl_seconds_ = 0;
 };
@@ -556,6 +555,22 @@ rocksdb::Status CoreModule::RegisterHandler(WholeKeyDeleteHandler* handler) {
         "whole-key delete handler already registered");
   }
   return rocksdb::Status::OK();
+}
+
+rocksdb::Status CoreModule::DeleteWholeKey(ModuleSnapshot* snapshot,
+                                           ModuleWriteBatch* write_batch,
+                                           const std::string& key,
+                                           const KeyLookup& lookup) {
+  if (!lookup.exists) {
+    return rocksdb::Status::OK();
+  }
+
+  WholeKeyDeleteHandler* handler = FindHandler(lookup.metadata.type);
+  if (handler == nullptr) {
+    return rocksdb::Status::InvalidArgument(
+        "DEL is unsupported for key type");
+  }
+  return handler->DeleteWholeKey(snapshot, write_batch, key, lookup);
 }
 
 WholeKeyDeleteHandler* CoreModule::FindHandler(ObjectType type) const {

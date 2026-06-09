@@ -74,11 +74,19 @@ Supported commands:
 - `LLEN`
 - `SADD`
 - `SCARD`
+- `SDIFF`
+- `SDIFFSTORE`
+- `SINTER`
+- `SINTERSTORE`
 - `SMEMBERS`
 - `SISMEMBER`
+- `SMISMEMBER`
+- `SMOVE`
 - `SPOP`
 - `SRANDMEMBER`
 - `SREM`
+- `SUNION`
+- `SUNIONSTORE`
 - `ZADD`
 - `ZCARD`
 - `ZCOUNT`
@@ -116,8 +124,9 @@ Those commands are registered by builtin modules during startup:
   `JSON.NUMINCRBY`
 - `ListModule`: `LPUSH`, `LPOP`, `LRANGE`, `RPUSH`, `RPOP`, `LREM`, `LTRIM`,
   `LLEN`
-- `SetModule`: `SADD`, `SCARD`, `SMEMBERS`, `SISMEMBER`, `SPOP`,
-  `SRANDMEMBER`, `SREM`
+- `SetModule`: `SADD`, `SCARD`, `SDIFF`, `SDIFFSTORE`, `SINTER`,
+  `SINTERSTORE`, `SISMEMBER`, `SMEMBERS`, `SMISMEMBER`, `SMOVE`, `SPOP`,
+  `SRANDMEMBER`, `SREM`, `SUNION`, `SUNIONSTORE`
 - `ZSetModule`: `ZADD`, `ZCARD`, `ZCOUNT`, `ZINCRBY`, `ZLEXCOUNT`, `ZRANGE`,
   `ZRANGEBYLEX`, `ZRANGEBYSCORE`, `ZRANK`, `ZREM`, `ZSCORE`
 - `GeoModule`: `GEOADD`, `GEOPOS`, `GEOHASH`, `GEODIST`, `GEOSEARCH`
@@ -176,12 +185,14 @@ Current builtin commands use these shapes:
 - integer: `EXISTS`, `DEL`, `EXPIRE`, `TTL`, `PTTL`, `PERSIST`, `STRLEN`,
   `GETBIT`, `SETBIT`, `BITCOUNT`, `HSET`, `HLEN`, `HEXISTS`, `HDEL`,
   JSON count commands, single-result `JSON.TOGGLE`, `LLEN`, `LPUSH`, `RPUSH`,
-  `LREM`, `SADD`, `SCARD`, `SISMEMBER`, `SREM`, `ZADD`, `ZCARD`, `ZCOUNT`,
-  `ZLEXCOUNT`, `ZRANK`, `ZREM`, `GEOADD`, `XTRIM`, `XDEL`, and `XLEN`
+  `LREM`, `SADD`, `SCARD`, `SISMEMBER`, `SMOVE`, `SREM`, `SDIFFSTORE`,
+  `SINTERSTORE`, `SUNIONSTORE`, `ZADD`, `ZCARD`, `ZCOUNT`, `ZLEXCOUNT`,
+  `ZRANK`, `ZREM`, `GEOADD`, `XTRIM`, `XDEL`, and `XLEN`
 - flat bulk-string arrays or arrays of bulk/null/integer values: `HMGET`,
   `HGETALL`, `HKEYS`, `HVALS`, `JSON.MGET`, JSONPath `JSON.TYPE`, JSONPath
-  `JSON.TOGGLE`, `LRANGE`, `SMEMBERS`, `GEOHASH`, `GEOSEARCH` without
-  `WITH*`, `ZRANGE`, `ZRANGEBYLEX`, and `ZRANGEBYSCORE`
+  `JSON.TOGGLE`, `LRANGE`, `SDIFF`, `SINTER`, `SMEMBERS`, `SMISMEMBER`,
+  counted `SPOP`, counted `SRANDMEMBER`, `SUNION`, `GEOHASH`, `GEOSEARCH`
+  without `WITH*`, `ZRANGE`, `ZRANGEBYLEX`, and `ZRANGEBYSCORE`
 - nested arrays: `GEOPOS`, `GEOSEARCH` with `WITH*`, `XRANGE`, `XREVRANGE`,
   and `XREAD`
 - null: missing-value reads such as `GET`, `HGET`, `JSON.GET`, `LPOP`, `RPOP`,

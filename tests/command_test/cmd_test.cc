@@ -69,6 +69,16 @@ void ExpectBulkStringArrayUnordered(const minikv::ReplyNode& reply,
   EXPECT_EQ(actual_sorted, expected_sorted);
 }
 
+void ExpectIntegerArray(const minikv::ReplyNode& reply,
+                        const std::vector<long long>& values) {
+  ASSERT_TRUE(reply.IsArray());
+  ASSERT_EQ(reply.array().size(), values.size());
+  for (size_t i = 0; i < values.size(); ++i) {
+    ASSERT_TRUE(reply.array()[i].IsInteger());
+    EXPECT_EQ(reply.array()[i].integer(), values[i]);
+  }
+}
+
 void ExpectHashPairsUnordered(
     const minikv::ReplyNode& reply,
     std::vector<minikv::FieldValue> expected) {
@@ -535,6 +545,12 @@ TEST_F(ModuleRuntimeTest, FindsRegisteredCommandsByName) {
   EXPECT_EQ(sismember->owner_module, "set");
   ExpectFlags(sismember->flags, true, false, true, false);
 
+  const minikv::CmdRegistration* smismember = registry().Find("SMISMEMBER");
+  ASSERT_NE(smismember, nullptr);
+  EXPECT_EQ(smismember->name, "SMISMEMBER");
+  EXPECT_EQ(smismember->owner_module, "set");
+  ExpectFlags(smismember->flags, true, false, true, false);
+
   const minikv::CmdRegistration* spop = registry().Find("SPOP");
   ASSERT_NE(spop, nullptr);
   EXPECT_EQ(spop->name, "SPOP");
@@ -552,6 +568,51 @@ TEST_F(ModuleRuntimeTest, FindsRegisteredCommandsByName) {
   EXPECT_EQ(srem->name, "SREM");
   EXPECT_EQ(srem->owner_module, "set");
   ExpectFlags(srem->flags, false, true, false, true);
+
+  const minikv::CmdRegistration* smove = registry().Find("SMOVE");
+  ASSERT_NE(smove, nullptr);
+  EXPECT_EQ(smove->name, "SMOVE");
+  EXPECT_EQ(smove->owner_module, "set");
+  ExpectFlags(smove->flags, false, true, true, false);
+
+  const minikv::CmdRegistration* sunion = registry().Find("SUNION");
+  ASSERT_NE(sunion, nullptr);
+  EXPECT_EQ(sunion->name, "SUNION");
+  EXPECT_EQ(sunion->owner_module, "set");
+  ExpectFlags(sunion->flags, true, false, false, true);
+
+  const minikv::CmdRegistration* sinter = registry().Find("SINTER");
+  ASSERT_NE(sinter, nullptr);
+  EXPECT_EQ(sinter->name, "SINTER");
+  EXPECT_EQ(sinter->owner_module, "set");
+  ExpectFlags(sinter->flags, true, false, false, true);
+
+  const minikv::CmdRegistration* sdiff = registry().Find("SDIFF");
+  ASSERT_NE(sdiff, nullptr);
+  EXPECT_EQ(sdiff->name, "SDIFF");
+  EXPECT_EQ(sdiff->owner_module, "set");
+  ExpectFlags(sdiff->flags, true, false, false, true);
+
+  const minikv::CmdRegistration* sunionstore =
+      registry().Find("SUNIONSTORE");
+  ASSERT_NE(sunionstore, nullptr);
+  EXPECT_EQ(sunionstore->name, "SUNIONSTORE");
+  EXPECT_EQ(sunionstore->owner_module, "set");
+  ExpectFlags(sunionstore->flags, false, true, false, true);
+
+  const minikv::CmdRegistration* sinterstore =
+      registry().Find("SINTERSTORE");
+  ASSERT_NE(sinterstore, nullptr);
+  EXPECT_EQ(sinterstore->name, "SINTERSTORE");
+  EXPECT_EQ(sinterstore->owner_module, "set");
+  ExpectFlags(sinterstore->flags, false, true, false, true);
+
+  const minikv::CmdRegistration* sdiffstore =
+      registry().Find("SDIFFSTORE");
+  ASSERT_NE(sdiffstore, nullptr);
+  EXPECT_EQ(sdiffstore->name, "SDIFFSTORE");
+  EXPECT_EQ(sdiffstore->owner_module, "set");
+  ExpectFlags(sdiffstore->flags, false, true, false, true);
 
   const minikv::CmdRegistration* zadd = registry().Find("ZADD");
   ASSERT_NE(zadd, nullptr);
@@ -918,6 +979,52 @@ TEST_F(ModuleRuntimeTest, CreatesCommandsFromRespParts) {
                  "set:1", {});
   ExpectFlags(sadd->Flags(), false, true, true, false);
 
+  std::unique_ptr<minikv::Cmd> smismember;
+  ASSERT_TRUE(minikv::CreateCmd(registry(),
+                                {"SMISMEMBER", "set:1", "a", "b"},
+                                &smismember)
+                  .ok());
+  ASSERT_NE(smismember, nullptr);
+  EXPECT_EQ(smismember->Name(), "SMISMEMBER");
+  ExpectLockPlan(smismember->lock_plan(), minikv::Cmd::LockPlan::Kind::kSingle,
+                 "set:1", {});
+  ExpectFlags(smismember->Flags(), true, false, true, false);
+
+  std::unique_ptr<minikv::Cmd> smove;
+  ASSERT_TRUE(
+      minikv::CreateCmd(registry(), {"SMOVE", "set:1", "set:2", "a"}, &smove)
+          .ok());
+  ASSERT_NE(smove, nullptr);
+  EXPECT_EQ(smove->Name(), "SMOVE");
+  ExpectLockPlan(smove->lock_plan(), minikv::Cmd::LockPlan::Kind::kMulti, "",
+                 {"set:1", "set:2"});
+  ExpectFlags(smove->Flags(), false, true, true, false);
+
+  std::unique_ptr<minikv::Cmd> sunion;
+  ASSERT_TRUE(minikv::CreateCmd(registry(),
+                                {"SUNION", "set:3", "set:1", "set:2",
+                                 "set:1"},
+                                &sunion)
+                  .ok());
+  ASSERT_NE(sunion, nullptr);
+  EXPECT_EQ(sunion->Name(), "SUNION");
+  ExpectLockPlan(sunion->lock_plan(), minikv::Cmd::LockPlan::Kind::kMulti, "",
+                 {"set:1", "set:2", "set:3"});
+  ExpectFlags(sunion->Flags(), true, false, false, true);
+
+  std::unique_ptr<minikv::Cmd> sdiffstore;
+  ASSERT_TRUE(minikv::CreateCmd(registry(),
+                                {"SDIFFSTORE", "set:dest", "set:3",
+                                 "set:1"},
+                                &sdiffstore)
+                  .ok());
+  ASSERT_NE(sdiffstore, nullptr);
+  EXPECT_EQ(sdiffstore->Name(), "SDIFFSTORE");
+  ExpectLockPlan(sdiffstore->lock_plan(),
+                 minikv::Cmd::LockPlan::Kind::kMulti, "",
+                 {"set:1", "set:3", "set:dest"});
+  ExpectFlags(sdiffstore->Flags(), false, true, false, true);
+
   std::unique_ptr<minikv::Cmd> lower_set;
   ASSERT_TRUE(
       minikv::CreateCmd(registry(), {"srem", "set:1", "a"}, &lower_set).ok());
@@ -1246,20 +1353,47 @@ TEST_F(ModuleRuntimeTest, RejectsBadArgumentsAndNullOutputs) {
   EXPECT_NE(status.ToString().find("SISMEMBER requires member"),
             std::string::npos);
 
-  status = minikv::CreateCmd(registry(), {"SPOP", "set:1", "extra"}, &cmd);
+  status = minikv::CreateCmd(registry(), {"SMISMEMBER", "set:1"}, &cmd);
   ASSERT_TRUE(status.IsInvalidArgument());
-  EXPECT_NE(status.ToString().find("SPOP takes no extra arguments"),
+  EXPECT_NE(status.ToString().find("SMISMEMBER requires at least one member"),
+            std::string::npos);
+
+  status = minikv::CreateCmd(registry(), {"SPOP", "set:1", "-1"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("SPOP requires non-negative integer count"),
             std::string::npos);
 
   status =
-      minikv::CreateCmd(registry(), {"SRANDMEMBER", "set:1", "extra"}, &cmd);
+      minikv::CreateCmd(registry(), {"SPOP", "set:1", "1", "extra"}, &cmd);
   ASSERT_TRUE(status.IsInvalidArgument());
-  EXPECT_NE(status.ToString().find("SRANDMEMBER takes no extra arguments"),
+  EXPECT_NE(status.ToString().find("SPOP takes at most count"),
+            std::string::npos);
+
+  status =
+      minikv::CreateCmd(registry(), {"SRANDMEMBER", "set:1", "bad"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("SRANDMEMBER requires integer count"),
+            std::string::npos);
+
+  status = minikv::CreateCmd(registry(),
+                             {"SRANDMEMBER", "set:1", "1", "extra"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("SRANDMEMBER takes at most count"),
             std::string::npos);
 
   status = minikv::CreateCmd(registry(), {"SREM", "set:1"}, &cmd);
   ASSERT_TRUE(status.IsInvalidArgument());
   EXPECT_NE(status.ToString().find("SREM requires at least one member"),
+            std::string::npos);
+
+  status = minikv::CreateCmd(registry(), {"SMOVE", "set:1", "set:2"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("SMOVE requires destination and member"),
+            std::string::npos);
+
+  status = minikv::CreateCmd(registry(), {"SUNIONSTORE", "set:dst"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("SUNIONSTORE requires at least one key"),
             std::string::npos);
 
   status = minikv::CreateCmd(registry(), {"ZADD", "zset:1"}, &cmd);
@@ -2010,6 +2144,72 @@ TEST_F(ModuleRuntimeTest, SetCommandsExecuteAgainstEngine) {
   ExpectMembersUnordered(members, {"b"});
 }
 
+TEST_F(ModuleRuntimeTest, SetCombinationCommandsExecuteAgainstEngine) {
+  ASSERT_TRUE(set_module_->AddMembers("set:a", {"a", "b", "c"}, nullptr).ok());
+  ASSERT_TRUE(set_module_->AddMembers("set:b", {"b", "c", "d"}, nullptr).ok());
+  ASSERT_TRUE(set_module_->AddMembers("set:c", {"c", "e"}, nullptr).ok());
+
+  minikv::CommandResponse response =
+      CreateFromParts({"SMISMEMBER", "set:a", "a", "x", "a"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ExpectIntegerArray(response.reply, {1, 0, 1});
+
+  response = CreateFromParts({"SUNION", "set:a", "set:b", "missing-set"})
+                 ->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ExpectBulkStringArrayUnordered(response.reply, {"a", "b", "c", "d"});
+
+  response = CreateFromParts({"SINTER", "set:a", "set:b", "set:c"})
+                 ->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ExpectBulkStringArrayUnordered(response.reply, {"c"});
+
+  response = CreateFromParts({"SDIFF", "set:a", "set:b"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ExpectBulkStringArrayUnordered(response.reply, {"a"});
+
+  response = CreateFromParts({"SUNIONSTORE", "set:store", "set:a", "set:c"})
+                 ->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsInteger());
+  EXPECT_EQ(response.reply.integer(), 4);
+
+  std::vector<std::string> members;
+  ASSERT_TRUE(set_module_->ReadMembers("set:store", &members).ok());
+  ExpectMembersUnordered(members, {"a", "b", "c", "e"});
+
+  response = CreateFromParts({"SINTERSTORE", "set:store", "set:a", "set:b"})
+                 ->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsInteger());
+  EXPECT_EQ(response.reply.integer(), 2);
+  ASSERT_TRUE(set_module_->ReadMembers("set:store", &members).ok());
+  ExpectMembersUnordered(members, {"b", "c"});
+
+  response = CreateFromParts({"SDIFFSTORE", "set:store", "set:a", "set:a"})
+                 ->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsInteger());
+  EXPECT_EQ(response.reply.integer(), 0);
+  ASSERT_TRUE(set_module_->ReadMembers("set:store", &members).ok());
+  EXPECT_TRUE(members.empty());
+
+  response = CreateFromParts({"SMOVE", "set:a", "set:dst", "a"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsInteger());
+  EXPECT_EQ(response.reply.integer(), 1);
+  ASSERT_TRUE(set_module_->ReadMembers("set:a", &members).ok());
+  ExpectMembersUnordered(members, {"b", "c"});
+  ASSERT_TRUE(set_module_->ReadMembers("set:dst", &members).ok());
+  ExpectMembersUnordered(members, {"a"});
+
+  response = CreateFromParts({"SMOVE", "set:a", "set:dst", "missing"})
+                 ->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsInteger());
+  EXPECT_EQ(response.reply.integer(), 0);
+}
+
 TEST_F(ModuleRuntimeTest, ZSetCommandsExecuteAgainstEngine) {
   minikv::CommandResponse response =
       CreateFromParts({"ZADD", "zset:cmd", "2", "b", "1", "a", "2", "c"})
@@ -2297,6 +2497,28 @@ TEST_F(ModuleRuntimeTest, RandomSetCommandsMatchExpectedSideEffects) {
   bool found = true;
   ASSERT_TRUE(set_module_->IsMember("set:rand", popped, &found).ok());
   EXPECT_FALSE(found);
+
+  ASSERT_TRUE(set_module_->AddMembers("set:rand:count", {"a", "b", "c"},
+                                      nullptr)
+                  .ok());
+  response = CreateFromParts({"SRANDMEMBER", "set:rand:count", "2"})
+                 ->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsArray());
+  EXPECT_EQ(response.reply.array().size(), 2U);
+
+  response = CreateFromParts({"SRANDMEMBER", "set:rand:count", "-4"})
+                 ->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsArray());
+  EXPECT_EQ(response.reply.array().size(), 4U);
+
+  response = CreateFromParts({"SPOP", "set:rand:count", "2"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsArray());
+  EXPECT_EQ(response.reply.array().size(), 2U);
+  ASSERT_TRUE(set_module_->Cardinality("set:rand:count", &size).ok());
+  EXPECT_EQ(size, 1U);
 }
 
 TEST_F(ModuleRuntimeTest, SetCommandsOnMissingKeyReturnEmptySuccess) {
@@ -2327,6 +2549,24 @@ TEST_F(ModuleRuntimeTest, SetCommandsOnMissingKeyReturnEmptySuccess) {
   response = CreateFromParts({"SPOP", "missing-set"})->Execute();
   ASSERT_TRUE(response.status.ok());
   EXPECT_TRUE(response.reply.IsNull());
+
+  response = CreateFromParts({"SRANDMEMBER", "missing-set", "2"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ExpectBulkStringArray(response.reply, {});
+
+  response = CreateFromParts({"SPOP", "missing-set", "2"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ExpectBulkStringArray(response.reply, {});
+
+  response = CreateFromParts({"SMISMEMBER", "missing-set", "a", "b"})
+                 ->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ExpectIntegerArray(response.reply, {0, 0});
+
+  response = CreateFromParts({"SUNION", "missing-set", "missing:set:2"})
+                 ->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ExpectBulkStringArray(response.reply, {});
 }
 
 TEST_F(ModuleRuntimeTest, StreamCommandsOnMissingKeyReturnEmptySuccess) {

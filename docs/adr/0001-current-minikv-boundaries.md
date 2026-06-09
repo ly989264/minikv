@@ -25,8 +25,9 @@ The current command registry is populated by builtin modules during startup:
   `JSON.NUMINCRBY`
 - `ListModule`: `LPUSH`, `LPOP`, `LRANGE`, `RPUSH`, `RPOP`, `LREM`, `LTRIM`,
   `LLEN`
-- `SetModule`: `SADD`, `SCARD`, `SMEMBERS`, `SISMEMBER`, `SPOP`,
-  `SRANDMEMBER`, `SREM`
+- `SetModule`: `SADD`, `SCARD`, `SDIFF`, `SDIFFSTORE`, `SINTER`,
+  `SINTERSTORE`, `SISMEMBER`, `SMEMBERS`, `SMISMEMBER`, `SMOVE`, `SPOP`,
+  `SRANDMEMBER`, `SREM`, `SUNION`, `SUNIONSTORE`
 - `ZSetModule`: `ZADD`, `ZCARD`, `ZCOUNT`, `ZINCRBY`, `ZLEXCOUNT`, `ZRANGE`,
   `ZRANGEBYLEX`, `ZRANGEBYSCORE`, `ZRANK`, `ZREM`, `ZSCORE`
 - `GeoModule`: `GEOADD`, `GEOPOS`, `GEOHASH`, `GEODIST`, `GEOSEARCH`

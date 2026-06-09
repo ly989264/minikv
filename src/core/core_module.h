@@ -23,6 +23,10 @@ class CoreModule : public Module, public WholeKeyDeleteRegistry {
   void OnStop(ModuleServices& services) override;
 
   rocksdb::Status RegisterHandler(WholeKeyDeleteHandler* handler) override;
+  rocksdb::Status DeleteWholeKey(ModuleSnapshot* snapshot,
+                                 ModuleWriteBatch* write_batch,
+                                 const std::string& key,
+                                 const KeyLookup& lookup) override;
   WholeKeyDeleteHandler* FindHandler(ObjectType type) const;
 
  private:

@@ -258,10 +258,26 @@ TEST(ModuleManagerTest, BuiltinModulesLoadIntoUnifiedRegistry) {
       manager.command_registry().Find("SMEMBERS");
   const minikv::CmdRegistration* sismember =
       manager.command_registry().Find("SISMEMBER");
+  const minikv::CmdRegistration* smismember =
+      manager.command_registry().Find("SMISMEMBER");
   const minikv::CmdRegistration* spop = manager.command_registry().Find("SPOP");
   const minikv::CmdRegistration* srandmember =
       manager.command_registry().Find("SRANDMEMBER");
   const minikv::CmdRegistration* srem = manager.command_registry().Find("SREM");
+  const minikv::CmdRegistration* smove =
+      manager.command_registry().Find("SMOVE");
+  const minikv::CmdRegistration* sunion =
+      manager.command_registry().Find("SUNION");
+  const minikv::CmdRegistration* sinter =
+      manager.command_registry().Find("SINTER");
+  const minikv::CmdRegistration* sdiff =
+      manager.command_registry().Find("SDIFF");
+  const minikv::CmdRegistration* sunionstore =
+      manager.command_registry().Find("SUNIONSTORE");
+  const minikv::CmdRegistration* sinterstore =
+      manager.command_registry().Find("SINTERSTORE");
+  const minikv::CmdRegistration* sdiffstore =
+      manager.command_registry().Find("SDIFFSTORE");
   const minikv::CmdRegistration* zadd = manager.command_registry().Find("ZADD");
   const minikv::CmdRegistration* zcard =
       manager.command_registry().Find("ZCARD");
@@ -331,9 +347,17 @@ TEST(ModuleManagerTest, BuiltinModulesLoadIntoUnifiedRegistry) {
   ASSERT_NE(scard, nullptr);
   ASSERT_NE(smembers, nullptr);
   ASSERT_NE(sismember, nullptr);
+  ASSERT_NE(smismember, nullptr);
   ASSERT_NE(spop, nullptr);
   ASSERT_NE(srandmember, nullptr);
   ASSERT_NE(srem, nullptr);
+  ASSERT_NE(smove, nullptr);
+  ASSERT_NE(sunion, nullptr);
+  ASSERT_NE(sinter, nullptr);
+  ASSERT_NE(sdiff, nullptr);
+  ASSERT_NE(sunionstore, nullptr);
+  ASSERT_NE(sinterstore, nullptr);
+  ASSERT_NE(sdiffstore, nullptr);
   ASSERT_NE(zadd, nullptr);
   ASSERT_NE(zcard, nullptr);
   ASSERT_NE(zcount, nullptr);
@@ -384,9 +408,17 @@ TEST(ModuleManagerTest, BuiltinModulesLoadIntoUnifiedRegistry) {
   EXPECT_EQ(scard->owner_module, "set");
   EXPECT_EQ(smembers->owner_module, "set");
   EXPECT_EQ(sismember->owner_module, "set");
+  EXPECT_EQ(smismember->owner_module, "set");
   EXPECT_EQ(spop->owner_module, "set");
   EXPECT_EQ(srandmember->owner_module, "set");
   EXPECT_EQ(srem->owner_module, "set");
+  EXPECT_EQ(smove->owner_module, "set");
+  EXPECT_EQ(sunion->owner_module, "set");
+  EXPECT_EQ(sinter->owner_module, "set");
+  EXPECT_EQ(sdiff->owner_module, "set");
+  EXPECT_EQ(sunionstore->owner_module, "set");
+  EXPECT_EQ(sinterstore->owner_module, "set");
+  EXPECT_EQ(sdiffstore->owner_module, "set");
   EXPECT_EQ(zadd->owner_module, "zset");
   EXPECT_EQ(zcard->owner_module, "zset");
   EXPECT_EQ(zcount->owner_module, "zset");

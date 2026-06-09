@@ -31,6 +31,10 @@ class WholeKeyDeleteRegistry {
   virtual ~WholeKeyDeleteRegistry() = default;
 
   virtual rocksdb::Status RegisterHandler(WholeKeyDeleteHandler* handler) = 0;
+  virtual rocksdb::Status DeleteWholeKey(ModuleSnapshot* snapshot,
+                                         ModuleWriteBatch* write_batch,
+                                         const std::string& key,
+                                         const KeyLookup& lookup) = 0;
 };
 
 }  // namespace minikv
