@@ -10,11 +10,26 @@ namespace minikv {
 namespace {
 
 constexpr size_t kEncodedMetadataSize = 26;
+constexpr size_t kEncodedExpireIndexHeaderSize = 12;
+
+void AppendUint32(std::string* out, uint32_t value) {
+  for (int shift = 24; shift >= 0; shift -= 8) {
+    out->push_back(static_cast<char>((value >> shift) & 0xff));
+  }
+}
 
 void AppendUint64(std::string* out, uint64_t value) {
   for (int shift = 56; shift >= 0; shift -= 8) {
     out->push_back(static_cast<char>((value >> shift) & 0xff));
   }
+}
+
+uint32_t DecodeUint32(const char* input) {
+  uint32_t value = 0;
+  for (int i = 0; i < 4; ++i) {
+    value = (value << 8) | static_cast<unsigned char>(input[i]);
+  }
+  return value;
 }
 
 uint64_t DecodeUint64(const char* input) {
@@ -56,6 +71,27 @@ bool IsKnownObjectEncoding(uint8_t value) {
 
 rocksdb::Status InvalidMetadataStatus() {
   return rocksdb::Status::Corruption("invalid key metadata");
+}
+
+ModuleKeyspace ExpireIndexKeyspace() {
+  return ModuleKeyspace(StorageColumnFamily::kModule, "core", "expires");
+}
+
+bool HasUserExpireAt(uint64_t expire_at_ms) {
+  return expire_at_ms != 0 &&
+         !DefaultCoreKeyService::IsLogicalDeleteExpireAt(expire_at_ms);
+}
+
+rocksdb::Status DeleteExpireIndexIfPresent(ModuleWriteBatch* write_batch,
+                                           const std::string& key,
+                                           const KeyLookup& lookup) {
+  if (!lookup.found || !HasUserExpireAt(lookup.metadata.expire_at_ms)) {
+    return rocksdb::Status::OK();
+  }
+  return write_batch->Delete(
+      ExpireIndexKeyspace(),
+      DefaultCoreKeyService::EncodeExpireIndexKey(lookup.metadata.expire_at_ms,
+                                                  key));
 }
 
 }  // namespace
@@ -154,9 +190,22 @@ uint64_t DefaultCoreKeyService::CurrentTimeMs() const {
 
 rocksdb::Status DefaultCoreKeyService::PutMetadata(
     ModuleWriteBatch* write_batch, const std::string& key,
-    const KeyMetadata& metadata) const {
+    const KeyLookup& before_lookup, const KeyMetadata& metadata) const {
   if (write_batch == nullptr) {
     return rocksdb::Status::InvalidArgument("module write batch is unavailable");
+  }
+  rocksdb::Status status =
+      DeleteExpireIndexIfPresent(write_batch, key, before_lookup);
+  if (!status.ok()) {
+    return status;
+  }
+  if (HasUserExpireAt(metadata.expire_at_ms)) {
+    status = write_batch->Put(
+        ExpireIndexKeyspace(),
+        EncodeExpireIndexKey(metadata.expire_at_ms, key), "");
+    if (!status.ok()) {
+      return status;
+    }
   }
   return write_batch->Put(StorageColumnFamily::kMeta,
                           KeyCodec::EncodeMetaKey(key),
@@ -220,6 +269,37 @@ bool DefaultCoreKeyService::DecodeMetadataValue(const rocksdb::Slice& value,
   metadata->version = DecodeUint64(value.data() + 2);
   metadata->size = DecodeUint64(value.data() + 10);
   metadata->expire_at_ms = DecodeUint64(value.data() + 18);
+  return true;
+}
+
+std::string DefaultCoreKeyService::EncodeExpireIndexKey(
+    uint64_t expire_at_ms, const std::string& key) {
+  std::string out;
+  out.reserve(kEncodedExpireIndexHeaderSize + key.size());
+  AppendUint64(&out, expire_at_ms);
+  AppendUint32(&out, static_cast<uint32_t>(key.size()));
+  out.append(key);
+  return out;
+}
+
+bool DefaultCoreKeyService::DecodeExpireIndexKey(const rocksdb::Slice& value,
+                                                 uint64_t* expire_at_ms,
+                                                 std::string* key) {
+  if (value.size() < kEncodedExpireIndexHeaderSize) {
+    return false;
+  }
+  const uint64_t decoded_expire_at_ms = DecodeUint64(value.data());
+  const uint32_t key_size = DecodeUint32(value.data() + sizeof(uint64_t));
+  const size_t expected_size = kEncodedExpireIndexHeaderSize + key_size;
+  if (value.size() != expected_size) {
+    return false;
+  }
+  if (expire_at_ms != nullptr) {
+    *expire_at_ms = decoded_expire_at_ms;
+  }
+  if (key != nullptr) {
+    key->assign(value.data() + kEncodedExpireIndexHeaderSize, key_size);
+  }
   return true;
 }
 

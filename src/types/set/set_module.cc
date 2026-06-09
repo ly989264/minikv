@@ -237,7 +237,8 @@ rocksdb::Status StoreSetResult(ModuleServices* services,
     }
   }
 
-  status = key_service->PutMetadata(write_batch.get(), destination, metadata);
+  status = key_service->PutMetadata(write_batch.get(), destination,
+                                    destination_lookup, metadata);
   if (!status.ok()) {
     return status;
   }
@@ -344,7 +345,7 @@ rocksdb::Status SetModule::AddMembers(const std::string& key,
   }
 
   after.size += added;
-  status = key_service_->PutMetadata(write_batch.get(), key, after);
+  status = key_service_->PutMetadata(write_batch.get(), key, lookup, after);
   if (!status.ok()) {
     return status;
   }
@@ -564,7 +565,7 @@ rocksdb::Status SetModule::RemoveMembers(const std::string& key,
     after.size -= removed;
   }
 
-  status = key_service_->PutMetadata(write_batch.get(), key, after);
+  status = key_service_->PutMetadata(write_batch.get(), key, lookup, after);
   if (!status.ok()) {
     return status;
   }
@@ -659,7 +660,8 @@ rocksdb::Status SetModule::MoveMember(const std::string& source,
   } else {
     --source_after.size;
   }
-  status = key_service_->PutMetadata(write_batch.get(), source, source_after);
+  status = key_service_->PutMetadata(write_batch.get(), source, source_lookup,
+                                     source_after);
   if (!status.ok()) {
     return status;
   }
@@ -675,7 +677,7 @@ rocksdb::Status SetModule::MoveMember(const std::string& source,
       return status;
     }
     status = key_service_->PutMetadata(write_batch.get(), destination,
-                                       destination_after);
+                                       destination_lookup, destination_after);
     if (!status.ok()) {
       return status;
     }
@@ -998,7 +1000,7 @@ rocksdb::Status SetModule::PopRandomMember(const std::string& key,
   } else {
     --after.size;
   }
-  status = key_service_->PutMetadata(write_batch.get(), key, after);
+  status = key_service_->PutMetadata(write_batch.get(), key, lookup, after);
   if (!status.ok()) {
     return status;
   }
@@ -1087,7 +1089,7 @@ rocksdb::Status SetModule::PopRandomMembers(const std::string& key,
   } else {
     after.size -= pop_count;
   }
-  status = key_service_->PutMetadata(write_batch.get(), key, after);
+  status = key_service_->PutMetadata(write_batch.get(), key, lookup, after);
   if (!status.ok()) {
     return status;
   }
@@ -1139,7 +1141,7 @@ rocksdb::Status SetModule::DeleteWholeKey(ModuleSnapshot* snapshot,
   }
 
   const KeyMetadata after = BuildSetTombstoneMetadata(key_service_, lookup);
-  return key_service_->PutMetadata(write_batch, key, after);
+  return key_service_->PutMetadata(write_batch, key, lookup, after);
 }
 
 rocksdb::Status SetModule::EnsureReady() const {

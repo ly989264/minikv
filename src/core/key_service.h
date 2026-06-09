@@ -76,6 +76,7 @@ class CoreKeyService {
   virtual uint64_t CurrentTimeMs() const = 0;
   virtual rocksdb::Status PutMetadata(ModuleWriteBatch* write_batch,
                                       const std::string& key,
+                                      const KeyLookup& before_lookup,
                                       const KeyMetadata& metadata) const = 0;
   virtual rocksdb::Status DeleteMetadata(ModuleWriteBatch* write_batch,
                                          const std::string& key) const = 0;
@@ -97,6 +98,7 @@ class DefaultCoreKeyService final : public CoreKeyService {
   uint64_t CurrentTimeMs() const override;
   rocksdb::Status PutMetadata(ModuleWriteBatch* write_batch,
                               const std::string& key,
+                              const KeyLookup& before_lookup,
                               const KeyMetadata& metadata) const override;
   rocksdb::Status DeleteMetadata(ModuleWriteBatch* write_batch,
                                  const std::string& key) const override;
@@ -105,6 +107,11 @@ class DefaultCoreKeyService final : public CoreKeyService {
   static std::string EncodeMetadataValue(const KeyMetadata& metadata);
   static bool DecodeMetadataValue(const rocksdb::Slice& value,
                                   KeyMetadata* metadata);
+  static std::string EncodeExpireIndexKey(uint64_t expire_at_ms,
+                                          const std::string& key);
+  static bool DecodeExpireIndexKey(const rocksdb::Slice& value,
+                                   uint64_t* expire_at_ms,
+                                   std::string* key);
   static bool IsLogicalDeleteExpireAt(uint64_t expire_at_ms);
 
  private:

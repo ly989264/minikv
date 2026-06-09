@@ -9,6 +9,10 @@
 
 namespace {
 
+bool ParseBoolFlagValue(const std::string& value) {
+  return value == "1" || value == "true" || value == "yes" || value == "on";
+}
+
 minikv::Config ParseConfig(int argc, char** argv) {
   minikv::Config config;
   for (int i = 1; i < argc; ++i) {
@@ -33,6 +37,16 @@ minikv::Config ParseConfig(int argc, char** argv) {
     } else if (arg == "--idle_timeout_ms" && i + 1 < argc) {
       config.idle_connection_timeout_ms =
           std::strtoull(argv[++i], nullptr, 10);
+    } else if (arg == "--active_expire_enabled" && i + 1 < argc) {
+      config.active_expire_enabled = ParseBoolFlagValue(argv[++i]);
+    } else if (arg == "--active_expire_interval_ms" && i + 1 < argc) {
+      config.active_expire_interval_ms =
+          std::strtoull(argv[++i], nullptr, 10);
+    } else if (arg == "--active_expire_batch_size" && i + 1 < argc) {
+      config.active_expire_batch_size = std::strtoul(argv[++i], nullptr, 10);
+    } else if (arg == "--active_expire_backfill_batch_size" && i + 1 < argc) {
+      config.active_expire_backfill_batch_size =
+          std::strtoul(argv[++i], nullptr, 10);
     }
   }
   return config;

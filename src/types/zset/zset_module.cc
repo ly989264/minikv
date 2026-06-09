@@ -732,7 +732,7 @@ rocksdb::Status ZSetModule::AddMembersWithEncoding(
     return rocksdb::Status::OK();
   }
 
-  status = key_service_->PutMetadata(write_batch.get(), key, after);
+  status = key_service_->PutMetadata(write_batch.get(), key, lookup, after);
   if (!status.ok()) {
     return status;
   }
@@ -870,7 +870,7 @@ rocksdb::Status ZSetModule::AddMembers(const std::string& key,
     return rocksdb::Status::OK();
   }
 
-  status = key_service_->PutMetadata(write_batch.get(), key, after);
+  status = key_service_->PutMetadata(write_batch.get(), key, lookup, after);
   if (!status.ok()) {
     return status;
   }
@@ -1065,7 +1065,7 @@ rocksdb::Status ZSetModule::IncrementBy(const std::string& key, double increment
   if (!status.ok()) {
     return status;
   }
-  status = key_service_->PutMetadata(write_batch.get(), key, after);
+  status = key_service_->PutMetadata(write_batch.get(), key, lookup, after);
   if (!status.ok()) {
     return status;
   }
@@ -1497,7 +1497,7 @@ rocksdb::Status ZSetModule::RemoveMembers(
   } else {
     after.size -= removed;
   }
-  status = key_service_->PutMetadata(write_batch.get(), key, after);
+  status = key_service_->PutMetadata(write_batch.get(), key, lookup, after);
   if (!status.ok()) {
     return status;
   }
@@ -1607,7 +1607,7 @@ rocksdb::Status ZSetModule::DeleteWholeKey(ModuleSnapshot* snapshot,
   }
 
   const KeyMetadata after = BuildZSetTombstoneMetadata(key_service_, lookup);
-  status = key_service_->PutMetadata(write_batch, key, after);
+  status = key_service_->PutMetadata(write_batch, key, lookup, after);
   if (!status.ok()) {
     return status;
   }

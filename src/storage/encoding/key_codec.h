@@ -9,7 +9,10 @@ namespace minikv {
 
 class KeyCodec {
  public:
+  static rocksdb::Slice MetaKeyPrefix();
   static std::string EncodeMetaKey(const std::string& user_key);
+  static bool DecodeMetaKey(const rocksdb::Slice& encoded_key,
+                            std::string* user_key);
   static std::string EncodeHashDataPrefix(const std::string& user_key,
                                           uint64_t version);
   static std::string EncodeHashDataKey(const std::string& user_key,

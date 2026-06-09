@@ -133,7 +133,7 @@ rocksdb::Status PersistJsonDocument(ModuleServices* services,
   if (!status.ok()) {
     return status;
   }
-  status = key_service->PutMetadata(write_batch.get(), key, metadata);
+  status = key_service->PutMetadata(write_batch.get(), key, lookup, metadata);
   if (!status.ok()) {
     return status;
   }

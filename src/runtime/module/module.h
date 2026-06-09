@@ -19,6 +19,10 @@ class Module {
   }
   virtual rocksdb::Status OnLoad(ModuleServices& services) = 0;
   virtual rocksdb::Status OnStart(ModuleServices& services) = 0;
+  virtual rocksdb::Status OnAfterStart(ModuleServices& services) {
+    return rocksdb::Status::OK();
+  }
+  virtual void OnPrepareStop(ModuleServices& services) {}
   virtual void OnStop(ModuleServices& services) = 0;
 };
 

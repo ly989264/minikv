@@ -368,7 +368,7 @@ rocksdb::Status ListModule::PushLeft(const std::string& key,
     ++after.size;
   }
 
-  status = key_service_->PutMetadata(write_batch.get(), key, after);
+  status = key_service_->PutMetadata(write_batch.get(), key, lookup, after);
   if (!status.ok()) {
     return status;
   }
@@ -448,7 +448,7 @@ rocksdb::Status ListModule::PushRight(const std::string& key,
     ++after.size;
   }
 
-  status = key_service_->PutMetadata(write_batch.get(), key, after);
+  status = key_service_->PutMetadata(write_batch.get(), key, lookup, after);
   if (!status.ok()) {
     return status;
   }
@@ -524,12 +524,12 @@ rocksdb::Status ListModule::PopLeft(const std::string& key, std::string* element
       return status;
     }
     const KeyMetadata after = BuildListTombstoneMetadata(key_service_, lookup);
-    status = key_service_->PutMetadata(write_batch.get(), key, after);
+    status = key_service_->PutMetadata(write_batch.get(), key, lookup, after);
   } else {
     KeyMetadata after = lookup.metadata;
     after.size = entries.size() - 1;
     const ListState state{entries[1].seq, entries.back().seq};
-    status = key_service_->PutMetadata(write_batch.get(), key, after);
+    status = key_service_->PutMetadata(write_batch.get(), key, lookup, after);
     if (!status.ok()) {
       return status;
     }
@@ -609,12 +609,12 @@ rocksdb::Status ListModule::PopRight(const std::string& key, std::string* elemen
       return status;
     }
     const KeyMetadata after = BuildListTombstoneMetadata(key_service_, lookup);
-    status = key_service_->PutMetadata(write_batch.get(), key, after);
+    status = key_service_->PutMetadata(write_batch.get(), key, lookup, after);
   } else {
     KeyMetadata after = lookup.metadata;
     after.size = entries.size() - 1;
     const ListState state{entries.front().seq, entries[entries.size() - 2].seq};
-    status = key_service_->PutMetadata(write_batch.get(), key, after);
+    status = key_service_->PutMetadata(write_batch.get(), key, lookup, after);
     if (!status.ok()) {
       return status;
     }
@@ -771,13 +771,13 @@ rocksdb::Status ListModule::RemoveElements(const std::string& key, int64_t count
       return status;
     }
     const KeyMetadata after = BuildListTombstoneMetadata(key_service_, lookup);
-    status = key_service_->PutMetadata(write_batch.get(), key, after);
+    status = key_service_->PutMetadata(write_batch.get(), key, lookup, after);
   } else {
     KeyMetadata after = lookup.metadata;
     after.size = kept_entries.size();
     ListState state;
     DeriveStateFromEntries(kept_entries, &state);
-    status = key_service_->PutMetadata(write_batch.get(), key, after);
+    status = key_service_->PutMetadata(write_batch.get(), key, lookup, after);
     if (!status.ok()) {
       return status;
     }
@@ -860,13 +860,13 @@ rocksdb::Status ListModule::Trim(const std::string& key, int64_t start,
       return status;
     }
     const KeyMetadata after = BuildListTombstoneMetadata(key_service_, lookup);
-    status = key_service_->PutMetadata(write_batch.get(), key, after);
+    status = key_service_->PutMetadata(write_batch.get(), key, lookup, after);
   } else {
     KeyMetadata after = lookup.metadata;
     after.size = kept_entries.size();
     ListState state;
     DeriveStateFromEntries(kept_entries, &state);
-    status = key_service_->PutMetadata(write_batch.get(), key, after);
+    status = key_service_->PutMetadata(write_batch.get(), key, lookup, after);
     if (!status.ok()) {
       return status;
     }
@@ -955,7 +955,7 @@ rocksdb::Status ListModule::DeleteWholeKey(ModuleSnapshot* snapshot,
   }
 
   const KeyMetadata after = BuildListTombstoneMetadata(key_service_, lookup);
-  return key_service_->PutMetadata(write_batch, key, after);
+  return key_service_->PutMetadata(write_batch, key, lookup, after);
 }
 
 rocksdb::Status ListModule::EnsureReady() const {

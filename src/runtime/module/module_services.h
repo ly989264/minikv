@@ -241,13 +241,17 @@ class ModuleBackgroundService {
 
 class ModuleSchedulerView {
  public:
-  explicit ModuleSchedulerView(const Scheduler* scheduler);
+  using Completion = std::function<void(CommandResponse)>;
+
+  explicit ModuleSchedulerView(Scheduler* scheduler);
 
   size_t worker_count() const;
   MetricsSnapshot GetMetricsSnapshot() const;
+  rocksdb::Status SubmitMaintenance(std::unique_ptr<Cmd> cmd,
+                                    Completion completion) const;
 
  private:
-  const Scheduler* scheduler_ = nullptr;
+  Scheduler* scheduler_ = nullptr;
 };
 
 struct ModuleMetricsStore {

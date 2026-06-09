@@ -243,7 +243,7 @@ rocksdb::Status StringModule::StoreValue(const std::string& key,
   if (!status.ok()) {
     return status;
   }
-  status = key_service_->PutMetadata(write_batch.get(), key, after);
+  status = key_service_->PutMetadata(write_batch.get(), key, lookup, after);
   if (!status.ok()) {
     return status;
   }
@@ -295,7 +295,8 @@ rocksdb::Status StringModule::SetValues(
     if (!status.ok()) {
       return status;
     }
-    status = key_service_->PutMetadata(write_batch.get(), value.first, after);
+    status =
+        key_service_->PutMetadata(write_batch.get(), value.first, lookup, after);
     if (!status.ok()) {
       return status;
     }
@@ -434,7 +435,7 @@ rocksdb::Status StringModule::AppendValue(const std::string& key,
   if (!status.ok()) {
     return status;
   }
-  status = key_service_->PutMetadata(write_batch.get(), key, after);
+  status = key_service_->PutMetadata(write_batch.get(), key, lookup, after);
   if (!status.ok()) {
     return status;
   }
@@ -548,7 +549,7 @@ rocksdb::Status StringModule::SetRange(const std::string& key, uint64_t offset,
   if (!status.ok()) {
     return status;
   }
-  status = key_service_->PutMetadata(write_batch.get(), key, after);
+  status = key_service_->PutMetadata(write_batch.get(), key, lookup, after);
   if (!status.ok()) {
     return status;
   }
@@ -606,7 +607,7 @@ rocksdb::Status StringModule::GetSetValue(const std::string& key,
   if (!status.ok()) {
     return status;
   }
-  status = key_service_->PutMetadata(write_batch.get(), key, after);
+  status = key_service_->PutMetadata(write_batch.get(), key, lookup, after);
   if (!status.ok()) {
     return status;
   }
@@ -668,7 +669,7 @@ rocksdb::Status StringModule::IncrementBy(const std::string& key,
   if (!status.ok()) {
     return status;
   }
-  status = key_service_->PutMetadata(write_batch.get(), key, after);
+  status = key_service_->PutMetadata(write_batch.get(), key, lookup, after);
   if (!status.ok()) {
     return status;
   }
@@ -735,7 +736,7 @@ rocksdb::Status StringModule::DecrementBy(const std::string& key,
   if (!status.ok()) {
     return status;
   }
-  status = key_service_->PutMetadata(write_batch.get(), key, after);
+  status = key_service_->PutMetadata(write_batch.get(), key, lookup, after);
   if (!status.ok()) {
     return status;
   }
@@ -806,7 +807,7 @@ rocksdb::Status StringModule::DeleteWholeKey(ModuleSnapshot* snapshot,
   }
 
   const KeyMetadata after = BuildStringTombstoneMetadata(key_service_, lookup);
-  return key_service_->PutMetadata(write_batch, key, after);
+  return key_service_->PutMetadata(write_batch, key, lookup, after);
 }
 
 rocksdb::Status StringModule::EnsureReady() const {

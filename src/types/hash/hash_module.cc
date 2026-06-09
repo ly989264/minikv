@@ -224,7 +224,7 @@ rocksdb::Status HashModule::PutFields(const std::string& key,
 
   std::unique_ptr<ModuleWriteBatch> write_batch =
       services_->storage().CreateWriteBatch();
-  status = key_service_->PutMetadata(write_batch.get(), key, after);
+  status = key_service_->PutMetadata(write_batch.get(), key, lookup, after);
   if (!status.ok()) {
     return status;
   }
@@ -457,10 +457,10 @@ rocksdb::Status HashModule::DeleteFields(const std::string& key,
   KeyMetadata after = before;
   if (removed >= before.size) {
     after = BuildHashTombstoneMetadata(key_service_, lookup);
-    status = key_service_->PutMetadata(write_batch.get(), key, after);
+    status = key_service_->PutMetadata(write_batch.get(), key, lookup, after);
   } else {
     after.size -= removed;
-    status = key_service_->PutMetadata(write_batch.get(), key, after);
+    status = key_service_->PutMetadata(write_batch.get(), key, lookup, after);
   }
   if (!status.ok()) {
     return status;
@@ -537,7 +537,7 @@ rocksdb::Status HashModule::DeleteWholeKey(ModuleSnapshot* snapshot,
     }
   }
   KeyMetadata after = BuildHashTombstoneMetadata(key_service_, lookup);
-  status = key_service_->PutMetadata(write_batch, key, after);
+  status = key_service_->PutMetadata(write_batch, key, lookup, after);
   if (!status.ok()) {
     return status;
   }

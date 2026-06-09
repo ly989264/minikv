@@ -1,6 +1,7 @@
 #include "runtime/module/module_manager.h"
 
 #include <array>
+#include <mutex>
 #include <string>
 #include <utility>
 
@@ -115,6 +116,14 @@ rocksdb::Status ModuleManager::Initialize() {
     slot.started = true;
   }
 
+  for (auto& slot : modules_) {
+    rocksdb::Status status = slot.module->OnAfterStart(slot.services);
+    if (!status.ok()) {
+      StopLoadedModules();
+      return status;
+    }
+  }
+
   initialized_ = true;
   return rocksdb::Status::OK();
 }
@@ -126,6 +135,16 @@ void ModuleManager::StopAll() {
   }
   StopLoadedModules();
   initialized_ = false;
+}
+
+uint64_t ModuleManager::GetMetricCounter(
+    const std::string& qualified_name) const {
+  if (metrics_store_ == nullptr) {
+    return 0;
+  }
+  std::lock_guard<std::mutex> lock(metrics_store_->mutex);
+  auto it = metrics_store_->counters.find(qualified_name);
+  return it != metrics_store_->counters.end() ? it->second : 0;
 }
 
 rocksdb::Status ModuleManager::ValidateStorageLayout() const {
@@ -172,6 +191,11 @@ rocksdb::Status ModuleManager::ValidateStorageLayout() const {
 void ModuleManager::StopLoadedModules() {
   registration_open_ = false;
   export_publish_open_ = false;
+  for (auto& slot : modules_) {
+    if (slot.loaded) {
+      slot.module->OnPrepareStop(slot.services);
+    }
+  }
   background_executor_.Stop();
   for (auto it = modules_.rbegin(); it != modules_.rend(); ++it) {
     if (!it->loaded) {

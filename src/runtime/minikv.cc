@@ -21,9 +21,19 @@
 namespace minikv {
 namespace {
 
-std::vector<std::unique_ptr<Module>> CreateBuiltinModules() {
+CoreModule::ActiveExpireOptions MakeActiveExpireOptions(const Config& config) {
+  CoreModule::ActiveExpireOptions options;
+  options.enabled = config.active_expire_enabled;
+  options.interval_ms = config.active_expire_interval_ms;
+  options.batch_size = config.active_expire_batch_size;
+  options.backfill_batch_size = config.active_expire_backfill_batch_size;
+  return options;
+}
+
+std::vector<std::unique_ptr<Module>> CreateBuiltinModules(const Config& config) {
   std::vector<std::unique_ptr<Module>> modules;
-  modules.push_back(std::make_unique<CoreModule>());
+  modules.push_back(std::make_unique<CoreModule>(
+      CoreModule::TimeSource(), MakeActiveExpireOptions(config)));
   modules.push_back(std::make_unique<StringModule>());
   modules.push_back(std::make_unique<BitmapModule>());
   modules.push_back(std::make_unique<HashModule>());
@@ -68,7 +78,7 @@ rocksdb::Status MiniKV::Open(const Config& config,
   impl->scheduler = std::make_unique<Scheduler>(
       config.worker_threads, config.max_pending_requests_per_worker);
   impl->module_manager = std::make_unique<ModuleManager>(
-      &impl->storage_engine, impl->scheduler.get(), CreateBuiltinModules());
+      &impl->storage_engine, impl->scheduler.get(), CreateBuiltinModules(config));
   status = impl->module_manager->Initialize();
   if (!status.ok()) {
     return status;

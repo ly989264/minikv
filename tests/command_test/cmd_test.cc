@@ -1,8 +1,14 @@
 #include <algorithm>
+#include <atomic>
+#include <chrono>
+#include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <limits>
 #include <memory>
 #include <string>
+#include <thread>
+#include <utility>
 #include <unistd.h>
 #include <vector>
 
@@ -10,7 +16,10 @@
 #include "runtime/config.h"
 #include "gtest/gtest.h"
 #include "execution/scheduler/scheduler.h"
+#include "runtime/module/module_services.h"
 #include "storage/engine/storage_engine.h"
+#include "storage/engine/snapshot.h"
+#include "storage/encoding/key_codec.h"
 #include "runtime/module/module.h"
 #include "runtime/module/module_manager.h"
 #include "types/bitmap/bitmap_module.h"
@@ -20,6 +29,7 @@
 #include "types/list/list_module.h"
 #include "types/string/string_module.h"
 #include "types/set/set_module.h"
+#include "types/set/set_internal.h"
 #include "types/geo/geo_module.h"
 #include "types/stream/stream_module.h"
 #include "types/zset/zset_module.h"
@@ -182,6 +192,27 @@ void ExpectLockPlan(const minikv::Cmd::LockPlan& plan,
   EXPECT_EQ(plan.multi_keys(), multi_keys);
 }
 
+void AppendUint32(std::string* out, uint32_t value) {
+  for (int shift = 24; shift >= 0; shift -= 8) {
+    out->push_back(static_cast<char>((value >> shift) & 0xff));
+  }
+}
+
+void AppendUint64(std::string* out, uint64_t value) {
+  for (int shift = 56; shift >= 0; shift -= 8) {
+    out->push_back(static_cast<char>((value >> shift) & 0xff));
+  }
+}
+
+std::string EncodeVersionedLocalPrefix(const std::string& key,
+                                       uint64_t version) {
+  std::string out;
+  AppendUint32(&out, static_cast<uint32_t>(key.size()));
+  out.append(key);
+  AppendUint64(&out, version);
+  return out;
+}
+
 class TestCmd : public minikv::Cmd {
  public:
   TestCmd()
@@ -244,8 +275,48 @@ class TestCmd : public minikv::Cmd {
   rocksdb::Status status_to_return_ = rocksdb::Status::OK();
 };
 
+class BlockingWriteCmd : public minikv::Cmd {
+ public:
+  BlockingWriteCmd(std::string key, std::atomic<bool>* started,
+                   std::atomic<bool>* release)
+      : minikv::Cmd("BLOCKING_WRITE",
+                    minikv::CmdFlags::kWrite | minikv::CmdFlags::kSlow),
+        key_(std::move(key)),
+        started_(started),
+        release_(release) {}
+
+ private:
+  rocksdb::Status DoInitial(const minikv::CmdInput& input) override {
+    if (input.has_key || !input.args.empty()) {
+      return rocksdb::Status::InvalidArgument(
+          "blocking write takes no arguments");
+    }
+    SetRouteKey(key_);
+    return rocksdb::Status::OK();
+  }
+
+  minikv::CommandResponse Do() override {
+    started_->store(true, std::memory_order_release);
+    while (!release_->load(std::memory_order_acquire)) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    return MakeSimpleString("OK");
+  }
+
+  std::string key_;
+  std::atomic<bool>* started_ = nullptr;
+  std::atomic<bool>* release_ = nullptr;
+};
+
 class ModuleRuntimeTest : public ::testing::Test {
  protected:
+  virtual minikv::CoreModule::ActiveExpireOptions ActiveExpireOptionsForTest()
+      const {
+    return minikv::CoreModule::ActiveExpireOptions{};
+  }
+  virtual size_t WorkerThreadCountForTest() const { return 2; }
+  virtual size_t MaxPendingRequestsPerWorkerForTest() const { return 16; }
+
   void SetUp() override {
     db_path_ = (std::filesystem::temp_directory_path() /
                 ("minikv-cmd-test-" + std::to_string(::getpid()) + "-" +
@@ -255,11 +326,12 @@ class ModuleRuntimeTest : public ::testing::Test {
     config.db_path = db_path_;
     storage_engine_ = std::make_unique<minikv::StorageEngine>();
     ASSERT_TRUE(storage_engine_->Open(config).ok());
-    scheduler_ = std::make_unique<minikv::Scheduler>(2, 16);
+    scheduler_ = std::make_unique<minikv::Scheduler>(
+        WorkerThreadCountForTest(), MaxPendingRequestsPerWorkerForTest());
 
     std::vector<std::unique_ptr<minikv::Module>> modules;
     modules.push_back(std::make_unique<minikv::CoreModule>(
-        [this]() { return now_ms_; }));
+        [this]() { return now_ms_; }, ActiveExpireOptionsForTest()));
     auto string_module = std::make_unique<minikv::StringModule>();
     string_module_ = string_module.get();
     modules.push_back(std::move(string_module));
@@ -314,6 +386,183 @@ class ModuleRuntimeTest : public ::testing::Test {
 
   void AdvanceTimeMs(uint64_t delta_ms) { now_ms_ += delta_ms; }
 
+  minikv::ModuleKeyspace ExpireIndexKeyspace() const {
+    return minikv::ModuleKeyspace(minikv::StorageColumnFamily::kModule, "core",
+                                  "expires");
+  }
+
+  bool HasExpireIndex(uint64_t expire_at_ms, const std::string& key) const {
+    std::string value;
+    const std::string local_key =
+        minikv::DefaultCoreKeyService::EncodeExpireIndexKey(expire_at_ms, key);
+    rocksdb::Status status = storage_engine_->Get(
+        minikv::StorageColumnFamily::kModule,
+        ExpireIndexKeyspace().EncodeKey(local_key), &value);
+    return status.ok();
+  }
+
+  size_t ExpireIndexEntryCount() const {
+    std::unique_ptr<minikv::Snapshot> snapshot =
+        storage_engine_->CreateSnapshot();
+    size_t count = 0;
+    EXPECT_TRUE(snapshot
+                    ->ScanPrefix(minikv::StorageColumnFamily::kModule,
+                                 ExpireIndexKeyspace().Prefix(),
+                                 [&count](const rocksdb::Slice&,
+                                          const rocksdb::Slice&) {
+                                   ++count;
+                                   return true;
+                                 })
+                    .ok());
+    return count;
+  }
+
+  bool TryReadRawMetadata(const std::string& key,
+                          minikv::KeyMetadata* metadata) const {
+    std::string raw_meta;
+    rocksdb::Status status = storage_engine_->Get(
+        minikv::StorageColumnFamily::kMeta,
+        minikv::KeyCodec::EncodeMetaKey(key), &raw_meta);
+    if (status.IsNotFound()) {
+      return false;
+    }
+    EXPECT_TRUE(status.ok());
+    EXPECT_TRUE(minikv::DefaultCoreKeyService::DecodeMetadataValue(raw_meta,
+                                                                   metadata));
+    return status.ok();
+  }
+
+  bool IsTombstoneMetadata(const std::string& key) const {
+    minikv::KeyMetadata metadata;
+    if (!TryReadRawMetadata(key, &metadata)) {
+      return false;
+    }
+    return metadata.expire_at_ms == minikv::kLogicalDeleteExpireAtMs;
+  }
+
+  bool StorageKeyExists(minikv::StorageColumnFamily column_family,
+                        const std::string& key) const {
+    std::string value;
+    rocksdb::Status status = storage_engine_->Get(column_family, key, &value);
+    return status.ok();
+  }
+
+  size_t CountStoragePrefix(minikv::StorageColumnFamily column_family,
+                            const std::string& prefix) const {
+    std::unique_ptr<minikv::Snapshot> snapshot =
+        storage_engine_->CreateSnapshot();
+    size_t count = 0;
+    EXPECT_TRUE(snapshot
+                    ->ScanPrefix(column_family, prefix,
+                                 [&count](const rocksdb::Slice&,
+                                          const rocksdb::Slice&) {
+                                   ++count;
+                                   return true;
+                                 })
+                    .ok());
+    return count;
+  }
+
+  uint64_t MetricCounter(const std::string& qualified_name) const {
+    return module_manager_->GetMetricCounter(qualified_name);
+  }
+
+  void InsertExpireIndex(uint64_t expire_at_ms, const std::string& key) {
+    const std::string index_key =
+        minikv::DefaultCoreKeyService::EncodeExpireIndexKey(expire_at_ms, key);
+    ASSERT_TRUE(storage_engine_
+                    ->Put(minikv::StorageColumnFamily::kModule,
+                          ExpireIndexKeyspace().EncodeKey(index_key), "")
+                    .ok());
+  }
+
+  size_t TypedRowCountFor(const std::string& key,
+                          const minikv::KeyMetadata& metadata) const {
+    switch (metadata.type) {
+      case minikv::ObjectType::kString: {
+        const minikv::ModuleKeyspace data_keyspace(
+            minikv::StorageColumnFamily::kString, "string", "data");
+        return StorageKeyExists(minikv::StorageColumnFamily::kString,
+                                data_keyspace.EncodeKey(key))
+                   ? 1
+                   : 0;
+      }
+      case minikv::ObjectType::kHash:
+        return CountStoragePrefix(
+            minikv::StorageColumnFamily::kHash,
+            minikv::KeyCodec::EncodeHashDataPrefix(key, metadata.version));
+      case minikv::ObjectType::kList: {
+        const std::string local_prefix =
+            EncodeVersionedLocalPrefix(key, metadata.version);
+        const minikv::ModuleKeyspace entries_keyspace(
+            minikv::StorageColumnFamily::kList, "list", "entries");
+        const minikv::ModuleKeyspace state_keyspace(
+            minikv::StorageColumnFamily::kList, "list", "state");
+        return CountStoragePrefix(
+                   minikv::StorageColumnFamily::kList,
+                   entries_keyspace.Prefix() + local_prefix) +
+               CountStoragePrefix(minikv::StorageColumnFamily::kList,
+                                  state_keyspace.Prefix() + local_prefix);
+      }
+      case minikv::ObjectType::kSet: {
+        const minikv::ModuleKeyspace members_keyspace(
+            minikv::StorageColumnFamily::kSet, "set", "members");
+        return CountStoragePrefix(
+            minikv::StorageColumnFamily::kSet,
+            members_keyspace.Prefix() +
+                minikv::EncodeSetMemberPrefix(key, metadata.version));
+      }
+      case minikv::ObjectType::kZSet: {
+        const std::string local_prefix =
+            EncodeVersionedLocalPrefix(key, metadata.version);
+        const minikv::ModuleKeyspace members_keyspace(
+            minikv::StorageColumnFamily::kZSet, "zset", "members");
+        const minikv::ModuleKeyspace score_index_keyspace(
+            minikv::StorageColumnFamily::kZSet, "zset", "score_index");
+        return CountStoragePrefix(
+                   minikv::StorageColumnFamily::kZSet,
+                   members_keyspace.Prefix() + local_prefix) +
+               CountStoragePrefix(minikv::StorageColumnFamily::kZSet,
+                                  score_index_keyspace.Prefix() + local_prefix);
+      }
+      case minikv::ObjectType::kStream: {
+        const std::string local_prefix =
+            EncodeVersionedLocalPrefix(key, metadata.version);
+        const minikv::ModuleKeyspace entries_keyspace(
+            minikv::StorageColumnFamily::kStream, "stream", "entries");
+        const minikv::ModuleKeyspace state_keyspace(
+            minikv::StorageColumnFamily::kStream, "stream", "state");
+        return CountStoragePrefix(
+                   minikv::StorageColumnFamily::kStream,
+                   entries_keyspace.Prefix() + local_prefix) +
+               CountStoragePrefix(minikv::StorageColumnFamily::kStream,
+                                  state_keyspace.Prefix() + local_prefix);
+      }
+      case minikv::ObjectType::kJson: {
+        const minikv::ModuleKeyspace data_keyspace(
+            minikv::StorageColumnFamily::kJson, "json", "data");
+        return StorageKeyExists(minikv::StorageColumnFamily::kJson,
+                                data_keyspace.EncodeKey(key))
+                   ? 1
+                   : 0;
+      }
+    }
+    return 0;
+  }
+
+  bool WaitUntil(const std::function<bool()>& predicate,
+                 uint64_t timeout_ms = 2000) const {
+    const auto deadline = std::chrono::steady_clock::now() +
+                          std::chrono::milliseconds(timeout_ms);
+    while (std::chrono::steady_clock::now() < deadline) {
+      if (predicate()) {
+        return true;
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    return predicate();
+  }
+
   static inline int counter_ = 0;
   std::string db_path_;
   uint64_t now_ms_ = 10'000;
@@ -330,6 +579,53 @@ class ModuleRuntimeTest : public ::testing::Test {
   minikv::GeoModule* geo_module_ = nullptr;
   minikv::StreamModule* stream_module_ = nullptr;
 };
+
+class ActiveExpireRuntimeTest : public ModuleRuntimeTest {
+ protected:
+  minikv::CoreModule::ActiveExpireOptions ActiveExpireOptionsForTest()
+      const override {
+    minikv::CoreModule::ActiveExpireOptions options;
+    options.enabled = true;
+    options.interval_ms = 1;
+    options.batch_size = 32;
+    options.backfill_batch_size = 32;
+    return options;
+  }
+};
+
+class ActiveExpireBusyRuntimeTest : public ActiveExpireRuntimeTest {
+ protected:
+  size_t WorkerThreadCountForTest() const override { return 1; }
+  size_t MaxPendingRequestsPerWorkerForTest() const override { return 1; }
+};
+
+TEST(CoreExpireIndexCodecTest, OrdersByExpireTimeAndDecodesBinaryKeys) {
+  const std::string early =
+      minikv::DefaultCoreKeyService::EncodeExpireIndexKey(100, "z");
+  const std::string late =
+      minikv::DefaultCoreKeyService::EncodeExpireIndexKey(200, "a");
+  EXPECT_LT(early, late);
+
+  const std::string binary_key(std::string("a\0b", 3));
+  const std::string encoded =
+      minikv::DefaultCoreKeyService::EncodeExpireIndexKey(12345, binary_key);
+  uint64_t expire_at_ms = 0;
+  std::string decoded_key;
+  ASSERT_TRUE(minikv::DefaultCoreKeyService::DecodeExpireIndexKey(
+      rocksdb::Slice(encoded), &expire_at_ms, &decoded_key));
+  EXPECT_EQ(expire_at_ms, 12345U);
+  EXPECT_EQ(decoded_key, binary_key);
+
+  const std::string empty_key =
+      minikv::DefaultCoreKeyService::EncodeExpireIndexKey(7, "");
+  ASSERT_TRUE(minikv::DefaultCoreKeyService::DecodeExpireIndexKey(
+      rocksdb::Slice(empty_key), &expire_at_ms, &decoded_key));
+  EXPECT_EQ(expire_at_ms, 7U);
+  EXPECT_TRUE(decoded_key.empty());
+
+  EXPECT_FALSE(minikv::DefaultCoreKeyService::DecodeExpireIndexKey(
+      rocksdb::Slice("short"), &expire_at_ms, &decoded_key));
+}
 
 TEST_F(ModuleRuntimeTest, FindsRegisteredCommandsByName) {
   const minikv::CmdRegistration* ping = registry().Find("PING");
@@ -2070,6 +2366,40 @@ TEST_F(ModuleRuntimeTest, ExpireTtlPttlAndPersistExecuteAgainstEngine) {
   EXPECT_EQ(response.reply.integer(), 0);
 }
 
+TEST_F(ModuleRuntimeTest, ExpireIndexTracksExpirePersistReplacementAndDel) {
+  minikv::CommandResponse response =
+      CreateFromParts({"SET", "str:index", "value"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+
+  response = CreateFromParts({"EXPIRE", "str:index", "5"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  EXPECT_TRUE(HasExpireIndex(15'000, "str:index"));
+  EXPECT_EQ(ExpireIndexEntryCount(), 1U);
+
+  response = CreateFromParts({"PERSIST", "str:index"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  EXPECT_FALSE(HasExpireIndex(15'000, "str:index"));
+  EXPECT_EQ(ExpireIndexEntryCount(), 0U);
+
+  response = CreateFromParts({"EXPIRE", "str:index", "5"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  EXPECT_TRUE(HasExpireIndex(15'000, "str:index"));
+
+  response = CreateFromParts({"SET", "str:index", "replace"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  EXPECT_FALSE(HasExpireIndex(15'000, "str:index"));
+  EXPECT_EQ(ExpireIndexEntryCount(), 0U);
+
+  response = CreateFromParts({"EXPIRE", "str:index", "5"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  EXPECT_TRUE(HasExpireIndex(15'000, "str:index"));
+
+  response = CreateFromParts({"DEL", "str:index"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  EXPECT_FALSE(HasExpireIndex(15'000, "str:index"));
+  EXPECT_EQ(ExpireIndexEntryCount(), 0U);
+}
+
 TEST_F(ModuleRuntimeTest, ExpiredKeysBehaveLikeMissingForCoreCommands) {
   ASSERT_TRUE(
       hash_module_->PutField("user:expired", "name", "alice", nullptr).ok());
@@ -2103,6 +2433,295 @@ TEST_F(ModuleRuntimeTest, ExpiredKeysBehaveLikeMissingForCoreCommands) {
   ASSERT_TRUE(response.status.ok());
   ASSERT_TRUE(response.reply.IsInteger());
   EXPECT_EQ(response.reply.integer(), 0);
+}
+
+TEST_F(ActiveExpireRuntimeTest, ActiveExpireDeletesExpiredKeysAcrossTypes) {
+  ASSERT_TRUE(CreateFromParts({"SET", "ae:string", "value"})->Execute().status.ok());
+  ASSERT_TRUE(CreateFromParts({"HSET", "ae:hash", "field", "value"})
+                  ->Execute()
+                  .status.ok());
+  ASSERT_TRUE(CreateFromParts({"JSON.SET", "ae:json", "$", "{\"v\":1}"})
+                  ->Execute()
+                  .status.ok());
+  ASSERT_TRUE(CreateFromParts({"RPUSH", "ae:list", "value"})->Execute().status.ok());
+  ASSERT_TRUE(CreateFromParts({"SADD", "ae:set", "member"})->Execute().status.ok());
+  ASSERT_TRUE(CreateFromParts({"ZADD", "ae:zset", "1", "member"})
+                  ->Execute()
+                  .status.ok());
+  ASSERT_TRUE(CreateFromParts({"XADD", "ae:stream", "1-0", "field", "value"})
+                  ->Execute()
+                  .status.ok());
+
+  const std::vector<std::string> keys = {
+      "ae:string", "ae:hash", "ae:json", "ae:list",
+      "ae:set",    "ae:zset", "ae:stream"};
+  std::vector<std::pair<std::string, minikv::KeyMetadata>> metadata_before;
+  metadata_before.reserve(keys.size());
+  for (const auto& key : keys) {
+    minikv::KeyMetadata metadata;
+    ASSERT_TRUE(TryReadRawMetadata(key, &metadata));
+    EXPECT_GT(TypedRowCountFor(key, metadata), 0U);
+    metadata_before.emplace_back(key, metadata);
+  }
+  for (const auto& key : keys) {
+    minikv::CommandResponse response =
+        CreateFromParts({"EXPIRE", key, "1"})->Execute();
+    ASSERT_TRUE(response.status.ok());
+    EXPECT_EQ(response.reply.integer(), 1);
+  }
+
+  AdvanceTimeMs(1000);
+  ASSERT_TRUE(WaitUntil([&]() {
+    return std::all_of(keys.begin(), keys.end(), [&](const std::string& key) {
+      return IsTombstoneMetadata(key);
+    });
+  }));
+  EXPECT_EQ(ExpireIndexEntryCount(), 0U);
+  for (const auto& [key, metadata] : metadata_before) {
+    EXPECT_EQ(TypedRowCountFor(key, metadata), 0U);
+  }
+  EXPECT_GE(MetricCounter("core.active_expire.cycles"), 1U);
+  EXPECT_GE(MetricCounter("core.active_expire.candidates"), keys.size());
+  EXPECT_GE(MetricCounter("core.active_expire.deleted"), keys.size());
+
+  for (const auto& key : keys) {
+    minikv::CommandResponse response = CreateFromParts({"TYPE", key})->Execute();
+    ASSERT_TRUE(response.status.ok());
+    ExpectBulkString(response.reply, "none");
+  }
+}
+
+TEST_F(ActiveExpireRuntimeTest, ActiveExpireBackfillsExistingTtlMetadata) {
+  module_manager_.reset();
+
+  minikv::KeyMetadata metadata;
+  metadata.type = minikv::ObjectType::kString;
+  metadata.encoding = minikv::ObjectEncoding::kRaw;
+  metadata.version = 1;
+  metadata.size = 5;
+  metadata.expire_at_ms = now_ms_ + 1;
+  ASSERT_TRUE(storage_engine_
+                  ->Put(minikv::StorageColumnFamily::kMeta,
+                        minikv::KeyCodec::EncodeMetaKey("ae:backfill"),
+                        minikv::DefaultCoreKeyService::EncodeMetadataValue(
+                            metadata))
+                  .ok());
+  const minikv::ModuleKeyspace string_data(
+      minikv::StorageColumnFamily::kString, "string", "data");
+  ASSERT_TRUE(storage_engine_
+                  ->Put(minikv::StorageColumnFamily::kString,
+                        string_data.EncodeKey("ae:backfill"), "value")
+                  .ok());
+
+  std::vector<std::unique_ptr<minikv::Module>> modules;
+  modules.push_back(std::make_unique<minikv::CoreModule>(
+      [this]() { return now_ms_; }, ActiveExpireOptionsForTest()));
+  modules.push_back(std::make_unique<minikv::StringModule>());
+  module_manager_ = std::make_unique<minikv::ModuleManager>(
+      storage_engine_.get(), scheduler_.get(), std::move(modules));
+  ASSERT_TRUE(module_manager_->Initialize().ok());
+
+  AdvanceTimeMs(1);
+  ASSERT_TRUE(WaitUntil(
+      [&]() { return IsTombstoneMetadata("ae:backfill"); }, 2000));
+  EXPECT_EQ(ExpireIndexEntryCount(), 0U);
+  EXPECT_EQ(TypedRowCountFor("ae:backfill", metadata), 0U);
+  EXPECT_GE(MetricCounter("core.active_expire.backfilled"), 1U);
+  EXPECT_GE(MetricCounter("core.active_expire.deleted"), 1U);
+}
+
+TEST_F(ActiveExpireRuntimeTest,
+       ActiveExpireDeleteWaitsForSameKeySchedulerLock) {
+  minikv::CommandResponse response =
+      CreateFromParts({"SET", "ae:locked", "value"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  response = CreateFromParts({"EXPIRE", "ae:locked", "1"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+
+  std::atomic<bool> blocker_started{false};
+  std::atomic<bool> blocker_release{false};
+  std::atomic<bool> blocker_done{false};
+  std::atomic<bool> blocker_ok{false};
+  auto blocker = std::make_unique<BlockingWriteCmd>(
+      "ae:locked", &blocker_started, &blocker_release);
+  ASSERT_TRUE(blocker->Init(minikv::CmdInput{}).ok());
+  ASSERT_TRUE(scheduler_
+                  ->Submit(std::move(blocker),
+                           [&blocker_done,
+                            &blocker_ok](minikv::CommandResponse result) {
+                             blocker_ok.store(result.status.ok(),
+                                              std::memory_order_release);
+                             blocker_done.store(true,
+                                                std::memory_order_release);
+                           })
+                  .ok());
+  ASSERT_TRUE(WaitUntil([&]() {
+    return blocker_started.load(std::memory_order_acquire);
+  }));
+
+  AdvanceTimeMs(1000);
+  ASSERT_TRUE(WaitUntil([&]() {
+    return MetricCounter("core.active_expire.candidates") >= 1;
+  }));
+  EXPECT_FALSE(IsTombstoneMetadata("ae:locked"));
+  EXPECT_TRUE(HasExpireIndex(11'000, "ae:locked"));
+
+  blocker_release.store(true, std::memory_order_release);
+  ASSERT_TRUE(WaitUntil([&]() {
+    return blocker_done.load(std::memory_order_acquire);
+  }));
+  EXPECT_TRUE(blocker_ok.load(std::memory_order_acquire));
+  ASSERT_TRUE(WaitUntil([&]() { return IsTombstoneMetadata("ae:locked"); }));
+  EXPECT_EQ(ExpireIndexEntryCount(), 0U);
+  EXPECT_GE(MetricCounter("core.active_expire.deleted"), 1U);
+}
+
+TEST_F(ActiveExpireBusyRuntimeTest,
+       ActiveExpireLeavesIndexWhenSchedulerIsBusyAndRetriesLater) {
+  minikv::CommandResponse response =
+      CreateFromParts({"SET", "ae:busy", "value"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  response = CreateFromParts({"EXPIRE", "ae:busy", "1"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+
+  std::atomic<bool> blockers_started{false};
+  std::atomic<bool> blockers_release{false};
+  std::atomic<int> blockers_done{0};
+  std::atomic<bool> blockers_ok{true};
+  auto running_blocker = std::make_unique<BlockingWriteCmd>(
+      "busy:running", &blockers_started, &blockers_release);
+  ASSERT_TRUE(running_blocker->Init(minikv::CmdInput{}).ok());
+  ASSERT_TRUE(scheduler_
+                  ->Submit(std::move(running_blocker),
+                           [&blockers_done,
+                            &blockers_ok](minikv::CommandResponse result) {
+                             if (!result.status.ok()) {
+                               blockers_ok.store(false,
+                                                 std::memory_order_release);
+                             }
+                             blockers_done.fetch_add(
+                                 1, std::memory_order_acq_rel);
+                           })
+                  .ok());
+  ASSERT_TRUE(WaitUntil([&]() {
+    return blockers_started.load(std::memory_order_acquire);
+  }));
+
+  std::atomic<bool> queued_blocker_started{false};
+  auto queued_blocker = std::make_unique<BlockingWriteCmd>(
+      "busy:queued", &queued_blocker_started, &blockers_release);
+  ASSERT_TRUE(queued_blocker->Init(minikv::CmdInput{}).ok());
+  ASSERT_TRUE(scheduler_
+                  ->Submit(std::move(queued_blocker),
+                           [&blockers_done,
+                            &blockers_ok](minikv::CommandResponse result) {
+                             if (!result.status.ok()) {
+                               blockers_ok.store(false,
+                                                 std::memory_order_release);
+                             }
+                             blockers_done.fetch_add(
+                                 1, std::memory_order_acq_rel);
+                           })
+                  .ok());
+
+  AdvanceTimeMs(1000);
+  ASSERT_TRUE(WaitUntil([&]() {
+    return MetricCounter("core.active_expire.scheduler_busy") >= 1;
+  }));
+  EXPECT_TRUE(HasExpireIndex(11'000, "ae:busy"));
+  EXPECT_FALSE(IsTombstoneMetadata("ae:busy"));
+
+  blockers_release.store(true, std::memory_order_release);
+  ASSERT_TRUE(WaitUntil([&]() {
+    return blockers_done.load(std::memory_order_acquire) == 2;
+  }));
+  EXPECT_TRUE(blockers_ok.load(std::memory_order_acquire));
+  ASSERT_TRUE(WaitUntil([&]() { return IsTombstoneMetadata("ae:busy"); }));
+  EXPECT_EQ(ExpireIndexEntryCount(), 0U);
+  EXPECT_GE(MetricCounter("core.active_expire.deleted"), 1U);
+}
+
+TEST_F(ActiveExpireRuntimeTest, StaleExpireIndexDoesNotDeleteCurrentKey) {
+  minikv::CommandResponse response =
+      CreateFromParts({"SET", "ae:stale", "value"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  response = CreateFromParts({"EXPIRE", "ae:stale", "5"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  response = CreateFromParts({"PERSIST", "ae:stale"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+
+  InsertExpireIndex(now_ms_ + 1, "ae:stale");
+
+  AdvanceTimeMs(1);
+  ASSERT_TRUE(WaitUntil([&]() { return ExpireIndexEntryCount() == 0; }));
+  response = CreateFromParts({"GET", "ae:stale"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ExpectBulkString(response.reply, "value");
+  minikv::KeyMetadata metadata;
+  ASSERT_TRUE(TryReadRawMetadata("ae:stale", &metadata));
+  EXPECT_EQ(metadata.expire_at_ms, 0U);
+  EXPECT_GE(MetricCounter("core.active_expire.stale"), 1U);
+}
+
+TEST_F(ActiveExpireRuntimeTest,
+       StaleExpireIndexDoesNotDeleteExtendedOrRecreatedKeys) {
+  minikv::CommandResponse response =
+      CreateFromParts({"SET", "ae:extend", "value"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  response = CreateFromParts({"EXPIRE", "ae:extend", "1"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  response = CreateFromParts({"EXPIRE", "ae:extend", "10"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  InsertExpireIndex(now_ms_ + 1, "ae:extend");
+
+  response = CreateFromParts({"SET", "ae:recreate", "old"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  response = CreateFromParts({"EXPIRE", "ae:recreate", "1"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  response = CreateFromParts({"DEL", "ae:recreate"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  response = CreateFromParts({"SET", "ae:recreate", "new"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  InsertExpireIndex(now_ms_ + 1, "ae:recreate");
+
+  response = CreateFromParts({"SET", "ae:multi-stale", "stable"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  InsertExpireIndex(now_ms_ + 1, "ae:multi-stale");
+  InsertExpireIndex(now_ms_ + 2, "ae:multi-stale");
+  InsertExpireIndex(now_ms_ + 3, "ae:multi-stale");
+
+  AdvanceTimeMs(3);
+  ASSERT_TRUE(WaitUntil([&]() {
+    return !HasExpireIndex(10'001, "ae:extend") &&
+           !HasExpireIndex(10'001, "ae:recreate") &&
+           !HasExpireIndex(10'001, "ae:multi-stale") &&
+           !HasExpireIndex(10'002, "ae:multi-stale") &&
+           !HasExpireIndex(10'003, "ae:multi-stale");
+  }));
+
+  response = CreateFromParts({"GET", "ae:extend"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ExpectBulkString(response.reply, "value");
+  EXPECT_TRUE(HasExpireIndex(20'000, "ae:extend"));
+
+  response = CreateFromParts({"TTL", "ae:extend"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsInteger());
+  EXPECT_EQ(response.reply.integer(), 9);
+
+  response = CreateFromParts({"GET", "ae:recreate"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ExpectBulkString(response.reply, "new");
+
+  minikv::KeyMetadata metadata;
+  ASSERT_TRUE(TryReadRawMetadata("ae:recreate", &metadata));
+  EXPECT_EQ(metadata.expire_at_ms, 0U);
+
+  response = CreateFromParts({"GET", "ae:multi-stale"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ExpectBulkString(response.reply, "stable");
+
+  EXPECT_GE(MetricCounter("core.active_expire.stale"), 5U);
 }
 
 TEST_F(ModuleRuntimeTest, ExpireZeroDeletesAndRecreateSeesFreshKey) {

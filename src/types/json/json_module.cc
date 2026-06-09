@@ -71,7 +71,7 @@ rocksdb::Status JsonModule::DeleteWholeKey(ModuleSnapshot* snapshot,
     return status;
   }
   const KeyMetadata metadata = json_internal::BuildJsonTombstoneMetadata(key_service_, lookup);
-  return key_service_->PutMetadata(write_batch, key, metadata);
+  return key_service_->PutMetadata(write_batch, key, lookup, metadata);
 }
 
 rocksdb::Status JsonModule::Set(const std::string& key, const JsonPath& path,

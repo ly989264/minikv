@@ -504,7 +504,7 @@ rocksdb::Status ModuleBackgroundService::Submit(Task task) const {
   return executor_->Submit(std::move(task));
 }
 
-ModuleSchedulerView::ModuleSchedulerView(const Scheduler* scheduler)
+ModuleSchedulerView::ModuleSchedulerView(Scheduler* scheduler)
     : scheduler_(scheduler) {}
 
 size_t ModuleSchedulerView::worker_count() const {
@@ -514,6 +514,18 @@ size_t ModuleSchedulerView::worker_count() const {
 MetricsSnapshot ModuleSchedulerView::GetMetricsSnapshot() const {
   return scheduler_ != nullptr ? scheduler_->GetMetricsSnapshot()
                                : MetricsSnapshot{};
+}
+
+rocksdb::Status ModuleSchedulerView::SubmitMaintenance(
+    std::unique_ptr<Cmd> cmd, Completion completion) const {
+  if (scheduler_ == nullptr) {
+    return rocksdb::Status::InvalidArgument("module scheduler is unavailable");
+  }
+  if (!completion) {
+    return rocksdb::Status::InvalidArgument(
+        "maintenance completion is required");
+  }
+  return scheduler_->Submit(std::move(cmd), std::move(completion));
 }
 
 ModuleMetrics::ModuleMetrics(ModuleNamespace module_namespace,

@@ -39,11 +39,32 @@ uint64_t KeyCodec::DecodeUint64(const char* input) {
   return value;
 }
 
+rocksdb::Slice KeyCodec::MetaKeyPrefix() { return rocksdb::Slice(kMetaPrefix); }
+
 std::string KeyCodec::EncodeMetaKey(const std::string& user_key) {
   std::string out(kMetaPrefix);
   AppendUint32(&out, static_cast<uint32_t>(user_key.size()));
   out.append(user_key);
   return out;
+}
+
+bool KeyCodec::DecodeMetaKey(const rocksdb::Slice& encoded_key,
+                             std::string* user_key) {
+  const rocksdb::Slice prefix(kMetaPrefix);
+  if (!StartsWith(encoded_key, prefix) ||
+      encoded_key.size() < prefix.size() + sizeof(uint32_t)) {
+    return false;
+  }
+  const char* length_ptr = encoded_key.data() + prefix.size();
+  const uint32_t key_size = DecodeUint32(length_ptr);
+  const size_t expected_size = prefix.size() + sizeof(uint32_t) + key_size;
+  if (encoded_key.size() != expected_size) {
+    return false;
+  }
+  if (user_key != nullptr) {
+    user_key->assign(length_ptr + sizeof(uint32_t), key_size);
+  }
+  return true;
 }
 
 std::string KeyCodec::EncodeHashDataPrefix(const std::string& user_key,

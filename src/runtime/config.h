@@ -16,6 +16,10 @@ struct Config {
   size_t max_connections = 1024;
   size_t max_request_bytes = 64 * 1024;
   uint64_t idle_connection_timeout_ms = 30000;
+  bool active_expire_enabled = true;
+  uint64_t active_expire_interval_ms = 100;
+  size_t active_expire_batch_size = 64;
+  size_t active_expire_backfill_batch_size = 512;
 };
 
 }  // namespace minikv

@@ -1,6 +1,8 @@
 #pragma once
 
+#include <cstdint>
 #include <memory>
+#include <string>
 #include <vector>
 
 #include "runtime/module/background_executor.h"
@@ -26,6 +28,7 @@ class ModuleManager {
 
   const CommandRegistry& command_registry() const { return command_registry_; }
   size_t module_count() const { return modules_.size(); }
+  uint64_t GetMetricCounter(const std::string& qualified_name) const;
 
  private:
   struct ModuleSlot {

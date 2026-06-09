@@ -113,7 +113,7 @@ rocksdb::Status StreamModule::AddEntry(
   after.size += 1;
   std::unique_ptr<ModuleWriteBatch> write_batch =
       services_->storage().CreateWriteBatch();
-  status = key_service_->PutMetadata(write_batch.get(), key, after);
+  status = key_service_->PutMetadata(write_batch.get(), key, lookup, after);
   if (!status.ok()) {
     return status;
   }
@@ -195,7 +195,8 @@ rocksdb::Status StreamModule::TrimByMaxLen(const std::string& key,
   if (ids.size() >= lookup.metadata.size) {
     const KeyMetadata tombstone =
         BuildStreamTombstoneMetadata(key_service_, lookup);
-    status = key_service_->PutMetadata(write_batch.get(), key, tombstone);
+    status =
+        key_service_->PutMetadata(write_batch.get(), key, lookup, tombstone);
     if (!status.ok()) {
       return status;
     }
@@ -207,7 +208,7 @@ rocksdb::Status StreamModule::TrimByMaxLen(const std::string& key,
   } else {
     KeyMetadata after = lookup.metadata;
     after.size -= ids.size();
-    status = key_service_->PutMetadata(write_batch.get(), key, after);
+    status = key_service_->PutMetadata(write_batch.get(), key, lookup, after);
     if (!status.ok()) {
       return status;
     }
@@ -289,7 +290,8 @@ rocksdb::Status StreamModule::DeleteEntries(const std::string& key,
   if (removed >= lookup.metadata.size) {
     const KeyMetadata tombstone =
         BuildStreamTombstoneMetadata(key_service_, lookup);
-    status = key_service_->PutMetadata(write_batch.get(), key, tombstone);
+    status =
+        key_service_->PutMetadata(write_batch.get(), key, lookup, tombstone);
     if (!status.ok()) {
       return status;
     }
@@ -301,7 +303,7 @@ rocksdb::Status StreamModule::DeleteEntries(const std::string& key,
   } else {
     KeyMetadata after = lookup.metadata;
     after.size -= removed;
-    status = key_service_->PutMetadata(write_batch.get(), key, after);
+    status = key_service_->PutMetadata(write_batch.get(), key, lookup, after);
     if (!status.ok()) {
       return status;
     }
@@ -519,7 +521,7 @@ rocksdb::Status StreamModule::DeleteWholeKey(ModuleSnapshot* snapshot,
   }
 
   const KeyMetadata after = BuildStreamTombstoneMetadata(key_service_, lookup);
-  return key_service_->PutMetadata(write_batch, key, after);
+  return key_service_->PutMetadata(write_batch, key, lookup, after);
 }
 
 rocksdb::Status StreamModule::EnsureReady() const {
