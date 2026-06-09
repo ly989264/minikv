@@ -56,7 +56,13 @@ Supported commands:
 - `JSON.TOGGLE`
 - `JSON.NUMINCRBY`
 - `HSET`
+- `HGET`
+- `HMGET`
+- `HLEN`
+- `HEXISTS`
 - `HGETALL`
+- `HKEYS`
+- `HVALS`
 - `HDEL`
 - `LPUSH`
 - `LPOP`
@@ -103,7 +109,8 @@ Those commands are registered by builtin modules during startup:
   `PERSIST`
 - `StringModule`: `SET`, `GET`, `STRLEN`
 - `BitmapModule`: `GETBIT`, `SETBIT`, `BITCOUNT`
-- `HashModule`: `HSET`, `HGETALL`, `HDEL`
+- `HashModule`: `HSET`, `HGET`, `HMGET`, `HLEN`, `HEXISTS`, `HGETALL`,
+  `HKEYS`, `HVALS`, `HDEL`
 - `JsonModule`: `JSON.SET`, `JSON.GET`, `JSON.MGET`, `JSON.DEL`,
   `JSON.FORGET`, `JSON.TYPE`, `JSON.CLEAR`, `JSON.TOGGLE`,
   `JSON.NUMINCRBY`
@@ -167,17 +174,17 @@ Current builtin commands use these shapes:
   single-result `JSON.NUMINCRBY`, `LPOP`, `RPOP`, `SRANDMEMBER`, `SPOP`,
   `ZINCRBY`, `ZSCORE`, `GEODIST`, and `XADD`
 - integer: `EXISTS`, `DEL`, `EXPIRE`, `TTL`, `PTTL`, `PERSIST`, `STRLEN`,
-  `GETBIT`, `SETBIT`, `BITCOUNT`, `HSET`, `HDEL`, JSON count commands,
-  single-result `JSON.TOGGLE`, `LLEN`, `LPUSH`, `RPUSH`, `LREM`, `SADD`,
-  `SCARD`, `SISMEMBER`, `SREM`, `ZADD`, `ZCARD`, `ZCOUNT`, `ZLEXCOUNT`,
-  `ZRANK`, `ZREM`, `GEOADD`, `XTRIM`, `XDEL`, and `XLEN`
-- flat bulk-string arrays or arrays of bulk/null/integer values: `HGETALL`,
-  `JSON.MGET`, JSONPath `JSON.TYPE`, JSONPath `JSON.TOGGLE`, `LRANGE`,
-  `SMEMBERS`, `GEOHASH`, `GEOSEARCH` without `WITH*`, `ZRANGE`,
-  `ZRANGEBYLEX`, and `ZRANGEBYSCORE`
+  `GETBIT`, `SETBIT`, `BITCOUNT`, `HSET`, `HLEN`, `HEXISTS`, `HDEL`,
+  JSON count commands, single-result `JSON.TOGGLE`, `LLEN`, `LPUSH`, `RPUSH`,
+  `LREM`, `SADD`, `SCARD`, `SISMEMBER`, `SREM`, `ZADD`, `ZCARD`, `ZCOUNT`,
+  `ZLEXCOUNT`, `ZRANK`, `ZREM`, `GEOADD`, `XTRIM`, `XDEL`, and `XLEN`
+- flat bulk-string arrays or arrays of bulk/null/integer values: `HMGET`,
+  `HGETALL`, `HKEYS`, `HVALS`, `JSON.MGET`, JSONPath `JSON.TYPE`, JSONPath
+  `JSON.TOGGLE`, `LRANGE`, `SMEMBERS`, `GEOHASH`, `GEOSEARCH` without
+  `WITH*`, `ZRANGE`, `ZRANGEBYLEX`, and `ZRANGEBYSCORE`
 - nested arrays: `GEOPOS`, `GEOSEARCH` with `WITH*`, `XRANGE`, `XREVRANGE`,
   and `XREAD`
-- null: missing-value reads such as `GET`, `JSON.GET`, `LPOP`, `RPOP`,
+- null: missing-value reads such as `GET`, `HGET`, `JSON.GET`, `LPOP`, `RPOP`,
   `SPOP`, `SRANDMEMBER`, `ZRANK`, `ZSCORE`, and `GEODIST`; `JSON.SET` when
   `NX`/`XX` prevents a write; `JSON.TYPE`, `JSON.TOGGLE`, and
   `JSON.NUMINCRBY` when the target is missing or incompatible; and `XREAD`

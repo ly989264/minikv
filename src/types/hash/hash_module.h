@@ -40,8 +40,19 @@ class HashModule : public Module,
 
   rocksdb::Status PutField(const std::string& key, const std::string& field,
                            const std::string& value, bool* inserted);
+  rocksdb::Status PutFields(const std::string& key,
+                            const std::vector<FieldValue>& values,
+                            uint64_t* inserted);
+  rocksdb::Status ReadField(const std::string& key, const std::string& field,
+                            FieldLookup* out);
+  rocksdb::Status ReadFields(const std::string& key,
+                             const std::vector<std::string>& fields,
+                             std::vector<FieldLookup>* out);
   rocksdb::Status ReadAll(const std::string& key,
                           std::vector<FieldValue>* out);
+  rocksdb::Status Length(const std::string& key, uint64_t* length);
+  rocksdb::Status FieldExists(const std::string& key,
+                              const std::string& field, bool* exists);
   rocksdb::Status DeleteFields(const std::string& key,
                                const std::vector<std::string>& fields,
                                uint64_t* deleted);

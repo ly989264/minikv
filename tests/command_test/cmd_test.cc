@@ -69,6 +69,37 @@ void ExpectBulkStringArrayUnordered(const minikv::ReplyNode& reply,
   EXPECT_EQ(actual_sorted, expected_sorted);
 }
 
+void ExpectHashPairsUnordered(
+    const minikv::ReplyNode& reply,
+    std::vector<minikv::FieldValue> expected) {
+  ASSERT_TRUE(reply.IsArray());
+  ASSERT_EQ(reply.array().size(), expected.size() * 2);
+
+  std::vector<minikv::FieldValue> actual;
+  actual.reserve(expected.size());
+  for (size_t i = 0; i < reply.array().size(); i += 2) {
+    ASSERT_TRUE(reply.array()[i].IsBulkString());
+    ASSERT_TRUE(reply.array()[i + 1].IsBulkString());
+    actual.push_back(
+        minikv::FieldValue{reply.array()[i].string(),
+                           reply.array()[i + 1].string()});
+  }
+
+  auto by_field = [](const minikv::FieldValue& lhs,
+                     const minikv::FieldValue& rhs) {
+    if (lhs.field == rhs.field) {
+      return lhs.value < rhs.value;
+    }
+    return lhs.field < rhs.field;
+  };
+  std::sort(actual.begin(), actual.end(), by_field);
+  std::sort(expected.begin(), expected.end(), by_field);
+  for (size_t i = 0; i < expected.size(); ++i) {
+    EXPECT_EQ(actual[i].field, expected[i].field);
+    EXPECT_EQ(actual[i].value, expected[i].value);
+  }
+}
+
 void ExpectBulkString(const minikv::ReplyNode& reply,
                       const std::string& value) {
   ASSERT_TRUE(reply.IsBulkString());
@@ -330,6 +361,30 @@ TEST_F(ModuleRuntimeTest, FindsRegisteredCommandsByName) {
   EXPECT_EQ(hset->owner_module, "hash");
   ExpectFlags(hset->flags, false, true, true, false);
 
+  const minikv::CmdRegistration* hget = registry().Find("HGET");
+  ASSERT_NE(hget, nullptr);
+  EXPECT_EQ(hget->name, "HGET");
+  EXPECT_EQ(hget->owner_module, "hash");
+  ExpectFlags(hget->flags, true, false, true, false);
+
+  const minikv::CmdRegistration* hmget = registry().Find("HMGET");
+  ASSERT_NE(hmget, nullptr);
+  EXPECT_EQ(hmget->name, "HMGET");
+  EXPECT_EQ(hmget->owner_module, "hash");
+  ExpectFlags(hmget->flags, true, false, true, false);
+
+  const minikv::CmdRegistration* hlen = registry().Find("HLEN");
+  ASSERT_NE(hlen, nullptr);
+  EXPECT_EQ(hlen->name, "HLEN");
+  EXPECT_EQ(hlen->owner_module, "hash");
+  ExpectFlags(hlen->flags, true, false, true, false);
+
+  const minikv::CmdRegistration* hexists = registry().Find("HEXISTS");
+  ASSERT_NE(hexists, nullptr);
+  EXPECT_EQ(hexists->name, "HEXISTS");
+  EXPECT_EQ(hexists->owner_module, "hash");
+  ExpectFlags(hexists->flags, true, false, true, false);
+
   const minikv::CmdRegistration* set = registry().Find("SET");
   ASSERT_NE(set, nullptr);
   EXPECT_EQ(set->name, "SET");
@@ -371,6 +426,18 @@ TEST_F(ModuleRuntimeTest, FindsRegisteredCommandsByName) {
   EXPECT_EQ(hgetall->name, "HGETALL");
   EXPECT_EQ(hgetall->owner_module, "hash");
   ExpectFlags(hgetall->flags, true, false, false, true);
+
+  const minikv::CmdRegistration* hkeys = registry().Find("HKEYS");
+  ASSERT_NE(hkeys, nullptr);
+  EXPECT_EQ(hkeys->name, "HKEYS");
+  EXPECT_EQ(hkeys->owner_module, "hash");
+  ExpectFlags(hkeys->flags, true, false, false, true);
+
+  const minikv::CmdRegistration* hvals = registry().Find("HVALS");
+  ASSERT_NE(hvals, nullptr);
+  EXPECT_EQ(hvals->name, "HVALS");
+  EXPECT_EQ(hvals->owner_module, "hash");
+  ExpectFlags(hvals->flags, true, false, false, true);
 
   const minikv::CmdRegistration* hdel = registry().Find("HDEL");
   ASSERT_NE(hdel, nullptr);
@@ -705,6 +772,33 @@ TEST_F(ModuleRuntimeTest, CreatesCommandsFromRespParts) {
                  "user:1", {});
   ExpectFlags(hset->Flags(), false, true, true, false);
 
+  struct HashCreateCase {
+    std::vector<std::string> parts;
+    std::string name;
+    bool fast;
+    bool slow;
+  };
+  const std::vector<HashCreateCase> hash_read_cases = {
+      {{"HGET", "user:1", "name"}, "HGET", true, false},
+      {{"HMGET", "user:1", "name", "city"}, "HMGET", true, false},
+      {{"HLEN", "user:1"}, "HLEN", true, false},
+      {{"HEXISTS", "user:1", "name"}, "HEXISTS", true, false},
+      {{"HKEYS", "user:1"}, "HKEYS", false, true},
+      {{"HVALS", "user:1"}, "HVALS", false, true},
+  };
+  for (const auto& test_case : hash_read_cases) {
+    std::unique_ptr<minikv::Cmd> hash_cmd;
+    ASSERT_TRUE(
+        minikv::CreateCmd(registry(), test_case.parts, &hash_cmd).ok());
+    ASSERT_NE(hash_cmd, nullptr);
+    EXPECT_EQ(hash_cmd->Name(), test_case.name);
+    EXPECT_EQ(hash_cmd->RouteKey(), "user:1");
+    ExpectLockPlan(hash_cmd->lock_plan(),
+                   minikv::Cmd::LockPlan::Kind::kSingle, "user:1", {});
+    ExpectFlags(hash_cmd->Flags(), true, false, test_case.fast,
+                test_case.slow);
+  }
+
   std::unique_ptr<minikv::Cmd> lower;
   ASSERT_TRUE(minikv::CreateCmd(registry(), {"hgetall", "user:1"}, &lower).ok());
   ASSERT_NE(lower, nullptr);
@@ -922,14 +1016,54 @@ TEST_F(ModuleRuntimeTest, RejectsBadArgumentsAndNullOutputs) {
   ASSERT_TRUE(status.IsInvalidArgument());
   EXPECT_NE(status.ToString().find("missing key"), std::string::npos);
 
+  status = minikv::CreateCmd(registry(), {"HSET", "user:1"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("field/value pairs"), std::string::npos);
+
   status = minikv::CreateCmd(registry(), {"HSET", "user:1", "field"}, &cmd);
   ASSERT_TRUE(status.IsInvalidArgument());
-  EXPECT_NE(status.ToString().find("HSET requires field and value"),
+  EXPECT_NE(status.ToString().find("field/value pairs"), std::string::npos);
+
+  status = minikv::CreateCmd(registry(), {"HGET", "user:1"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("HGET requires field"), std::string::npos);
+
+  status = minikv::CreateCmd(registry(), {"HGET", "user:1", "field", "x"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("HGET requires field"), std::string::npos);
+
+  status = minikv::CreateCmd(registry(), {"HMGET", "user:1"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("HMGET requires at least one field"),
             std::string::npos);
+
+  status = minikv::CreateCmd(registry(), {"HLEN", "user:1", "extra"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("HLEN takes no extra arguments"),
+            std::string::npos);
+
+  status = minikv::CreateCmd(registry(), {"HEXISTS", "user:1"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("HEXISTS requires field"), std::string::npos);
+
+  status =
+      minikv::CreateCmd(registry(), {"HEXISTS", "user:1", "field", "x"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("HEXISTS requires field"), std::string::npos);
 
   status = minikv::CreateCmd(registry(), {"HGETALL", "user:1", "extra"}, &cmd);
   ASSERT_TRUE(status.IsInvalidArgument());
   EXPECT_NE(status.ToString().find("HGETALL takes no extra arguments"),
+            std::string::npos);
+
+  status = minikv::CreateCmd(registry(), {"HKEYS", "user:1", "extra"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("HKEYS takes no extra arguments"),
+            std::string::npos);
+
+  status = minikv::CreateCmd(registry(), {"HVALS", "user:1", "extra"}, &cmd);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("HVALS takes no extra arguments"),
             std::string::npos);
 
   status = minikv::CreateCmd(registry(), {"JSON.SET", "doc"}, &cmd);
@@ -1655,28 +1789,74 @@ TEST_F(ModuleRuntimeTest, ExpireZeroDeletesAndRecreateSeesFreshKey) {
   ExpectBulkStringArray(response.reply, {"fresh", "new"});
 }
 
-TEST_F(ModuleRuntimeTest, HSetAndHGetAllExecuteAgainstEngine) {
+TEST_F(ModuleRuntimeTest, HashReadCommandsExecuteAgainstEngine) {
   std::unique_ptr<minikv::Cmd> set_insert =
-      CreateFromParts({"HSET", "user:2", "name", "alice"});
+      CreateFromParts({"HSET", "user:2", "name", "alice", "city",
+                       "shanghai", "name", "alice-2"});
   ASSERT_NE(set_insert, nullptr);
   minikv::CommandResponse response = set_insert->Execute();
   ASSERT_TRUE(response.status.ok());
   ASSERT_TRUE(response.reply.IsInteger());
-  EXPECT_EQ(response.reply.integer(), 1);
+  EXPECT_EQ(response.reply.integer(), 2);
 
   std::unique_ptr<minikv::Cmd> set_update =
-      CreateFromParts({"HSET", "user:2", "name", "alice-2"});
+      CreateFromParts({"HSET", "user:2", "city", "beijing", "age", "30"});
   ASSERT_NE(set_update, nullptr);
   response = set_update->Execute();
   ASSERT_TRUE(response.status.ok());
+  EXPECT_EQ(response.reply.integer(), 1);
+
+  response = CreateFromParts({"HGET", "user:2", "name"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ExpectBulkString(response.reply, "alice-2");
+
+  response = CreateFromParts({"HGET", "user:2", "missing"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  EXPECT_TRUE(response.reply.IsNull());
+
+  response = CreateFromParts({"HMGET", "user:2", "city", "missing", "name"})
+                 ->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsArray());
+  ASSERT_EQ(response.reply.array().size(), 3U);
+  ASSERT_TRUE(response.reply.array()[0].IsBulkString());
+  EXPECT_EQ(response.reply.array()[0].string(), "beijing");
+  EXPECT_TRUE(response.reply.array()[1].IsNull());
+  ASSERT_TRUE(response.reply.array()[2].IsBulkString());
+  EXPECT_EQ(response.reply.array()[2].string(), "alice-2");
+
+  response = CreateFromParts({"HLEN", "user:2"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsInteger());
+  EXPECT_EQ(response.reply.integer(), 3);
+
+  response = CreateFromParts({"HEXISTS", "user:2", "age"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsInteger());
+  EXPECT_EQ(response.reply.integer(), 1);
+
+  response = CreateFromParts({"HEXISTS", "user:2", "missing"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsInteger());
   EXPECT_EQ(response.reply.integer(), 0);
+
+  response = CreateFromParts({"HKEYS", "user:2"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ExpectBulkStringArrayUnordered(response.reply, {"name", "city", "age"});
+
+  response = CreateFromParts({"HVALS", "user:2"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ExpectBulkStringArrayUnordered(response.reply,
+                                 {"alice-2", "beijing", "30"});
 
   std::unique_ptr<minikv::Cmd> get =
       CreateFromParts({"HGETALL", "user:2"});
   ASSERT_NE(get, nullptr);
   response = get->Execute();
   ASSERT_TRUE(response.status.ok());
-  ExpectBulkStringArray(response.reply, {"name", "alice-2"});
+  ExpectHashPairsUnordered(
+      response.reply,
+      {{"name", "alice-2"}, {"city", "beijing"}, {"age", "30"}});
 }
 
 TEST_F(ModuleRuntimeTest, StringCommandsExecuteAgainstEngine) {
@@ -1772,7 +1952,7 @@ TEST_F(ModuleRuntimeTest, HDelExecuteRemovesFields) {
   ASSERT_TRUE(hash_module_->PutField("user:3", "b", "2", nullptr).ok());
 
   std::unique_ptr<minikv::Cmd> del =
-      CreateFromParts({"HDEL", "user:3", "a", "b", "c"});
+      CreateFromParts({"HDEL", "user:3", "a", "a", "b", "b", "c"});
   ASSERT_NE(del, nullptr);
 
   minikv::CommandResponse response = del->Execute();
@@ -2399,6 +2579,35 @@ TEST_F(ModuleRuntimeTest, HashCommandsOnMissingKeyReturnEmptySuccess) {
       CreateFromParts({"HGETALL", "missing"});
   ASSERT_NE(get, nullptr);
   minikv::CommandResponse response = get->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ExpectBulkStringArray(response.reply, {});
+
+  response = CreateFromParts({"HGET", "missing", "field"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  EXPECT_TRUE(response.reply.IsNull());
+
+  response = CreateFromParts({"HMGET", "missing", "a", "b"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsArray());
+  ASSERT_EQ(response.reply.array().size(), 2U);
+  EXPECT_TRUE(response.reply.array()[0].IsNull());
+  EXPECT_TRUE(response.reply.array()[1].IsNull());
+
+  response = CreateFromParts({"HLEN", "missing"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsInteger());
+  EXPECT_EQ(response.reply.integer(), 0);
+
+  response = CreateFromParts({"HEXISTS", "missing", "field"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ASSERT_TRUE(response.reply.IsInteger());
+  EXPECT_EQ(response.reply.integer(), 0);
+
+  response = CreateFromParts({"HKEYS", "missing"})->Execute();
+  ASSERT_TRUE(response.status.ok());
+  ExpectBulkStringArray(response.reply, {});
+
+  response = CreateFromParts({"HVALS", "missing"})->Execute();
   ASSERT_TRUE(response.status.ok());
   ExpectBulkStringArray(response.reply, {});
 

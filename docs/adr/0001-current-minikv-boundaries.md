@@ -18,7 +18,8 @@ The current command registry is populated by builtin modules during startup:
   `PERSIST`
 - `StringModule`: `SET`, `GET`, `STRLEN`
 - `BitmapModule`: `GETBIT`, `SETBIT`, `BITCOUNT`
-- `HashModule`: `HSET`, `HGETALL`, `HDEL`
+- `HashModule`: `HSET`, `HGET`, `HMGET`, `HLEN`, `HEXISTS`, `HGETALL`,
+  `HKEYS`, `HVALS`, `HDEL`
 - `JsonModule`: `JSON.SET`, `JSON.GET`, `JSON.MGET`, `JSON.DEL`,
   `JSON.FORGET`, `JSON.TYPE`, `JSON.CLEAR`, `JSON.TOGGLE`,
   `JSON.NUMINCRBY`

@@ -18,7 +18,8 @@ Current user-visible scope:
   `SET`, `GET`, `STRLEN`, `GETBIT`, `SETBIT`, `BITCOUNT`,
   `JSON.SET`, `JSON.GET`, `JSON.MGET`, `JSON.DEL`, `JSON.FORGET`,
   `JSON.TYPE`, `JSON.CLEAR`, `JSON.TOGGLE`, `JSON.NUMINCRBY`,
-  `HSET`, `HGETALL`, `HDEL`,
+  `HSET`, `HGET`, `HMGET`, `HLEN`, `HEXISTS`, `HGETALL`, `HKEYS`, `HVALS`,
+  `HDEL`,
   `LPUSH`, `LPOP`, `LRANGE`, `RPUSH`, `RPOP`, `LREM`, `LTRIM`, `LLEN`,
   `SADD`, `SCARD`, `SMEMBERS`, `SISMEMBER`, `SPOP`, `SRANDMEMBER`, `SREM`,
   `ZADD`, `ZCARD`, `ZCOUNT`, `ZINCRBY`, `ZLEXCOUNT`, `ZRANGE`,
@@ -181,7 +182,8 @@ Hash semantics layer.
 
 `HashModule` is responsible for:
 
-- registering `HSET`, `HGETALL`, and `HDEL` during `OnLoad()`
+- registering `HSET`, `HGET`, `HMGET`, `HLEN`, `HEXISTS`, `HGETALL`,
+  `HKEYS`, `HVALS`, and `HDEL` during `OnLoad()`
 - exporting `HashIndexingBridge`
 - registering itself as the whole-key delete handler for hash values
 - implementing `PutField()`, `ReadAll()`, `DeleteFields()`, and

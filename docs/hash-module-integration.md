@@ -11,9 +11,8 @@ It lives under `src/types/hash/` and is loaded by `ModuleManager` during
 
 `HashModule` owns:
 
-- builtin command registration for `HSET`
-- builtin command registration for `HGETALL`
-- builtin command registration for `HDEL`
+- builtin command registration for `HSET`, `HGET`, `HMGET`, `HLEN`,
+  `HEXISTS`, `HGETALL`, `HKEYS`, `HVALS`, and `HDEL`
 - the exported `HashIndexingBridge`
 - whole-key delete handling for hash values
 - hash read, write, delete, tombstone, and recreate semantics on top of
@@ -29,7 +28,7 @@ The registration flow is:
 1. `MiniKV` constructs `ModuleManager`
 2. `ModuleManager` calls `HashModule::OnLoad()`
 3. `HashModule` publishes `hash.indexing_bridge`
-4. `HashModule` registers `HSET`, `HGETALL`, and `HDEL` through
+4. `HashModule` registers its hash command family through
    `ModuleServices::command_registry()`
 5. `ModuleManager` later calls `HashModule::OnStart()`
 6. `HashModule` resolves `core.key_service` and
@@ -62,10 +61,15 @@ Current storage layout:
 
 Current hash behavior in code is:
 
-- `HSET` inserts or overwrites one field and returns `1` on insert, `0` on
-  overwrite
+- `HSET` inserts or overwrites one or more field/value pairs and returns the
+  number of newly inserted fields
+- `HGET` returns one field value or null when the key or field is missing
+- `HMGET` returns requested field values in request order, using null for
+  missing fields
+- `HLEN` and `HEXISTS` read hash length and field presence
 - `HGETALL` scans all visible fields for the current metadata version and
   returns a flat field/value array
+- `HKEYS` and `HVALS` scan visible fields and return only field names or values
 - `HDEL` removes existing fields and returns the number of removed fields
 - deleting the final field writes a metadata tombstone instead of deleting the
   metadata row

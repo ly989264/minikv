@@ -52,10 +52,14 @@ class MarkerObserver : public minikv::HashObserver {
   rocksdb::Status OnHashMutation(const minikv::HashMutation& mutation,
                                  minikv::ModuleWriteBatch* write_batch) override {
     if (mutation.type == minikv::HashMutation::Type::kPutField) {
+      std::vector<std::string> values;
+      values.reserve(mutation.values.size());
+      for (const auto& value : mutation.values) {
+        values.push_back(value.field + "=" + value.value);
+      }
       return write_batch->Put(minikv::StorageColumnFamily::kDefault,
                               PutMarkerKey(mutation.key),
-                              mutation.values.front().field + "=" +
-                                  mutation.values.front().value);
+                              Join(values));
     }
     return write_batch->Put(minikv::StorageColumnFamily::kDefault,
                             DeleteMarkerKey(mutation.key),
@@ -189,6 +193,33 @@ TEST_F(HashObserverTest, ObserverCanAppendWritesOnPutInSameBatch) {
   EXPECT_EQ(values[0].value, "alice");
 }
 
+TEST_F(HashObserverTest, ObserverSeesAllFieldsFromMultiFieldPut) {
+  ASSERT_NE(bridge(), nullptr);
+
+  MarkerObserver marker;
+  ASSERT_TRUE(bridge()->AddObserver(&marker).ok());
+
+  uint64_t inserted = 0;
+  ASSERT_TRUE(hash_module_
+                  ->PutFields("user:put:multi",
+                              {{"name", "alice"},
+                               {"city", "shanghai"},
+                               {"name", "alice-2"}},
+                              &inserted)
+                  .ok());
+  EXPECT_EQ(inserted, 2U);
+
+  std::string marker_value;
+  ASSERT_TRUE(ReadDefault(MarkerObserver::PutMarkerKey("user:put:multi"),
+                          &marker_value)
+                  .ok());
+  EXPECT_EQ(marker_value, "name=alice-2,city=shanghai");
+
+  std::vector<minikv::FieldValue> values;
+  ASSERT_TRUE(hash_module_->ReadAll("user:put:multi", &values).ok());
+  ASSERT_EQ(values.size(), 2U);
+}
+
 TEST_F(HashObserverTest, ObserverCanAppendWritesOnDeleteInSameBatch) {
   ASSERT_NE(bridge(), nullptr);
   ASSERT_TRUE(hash_module_->PutField("user:delete", "name", "alice", nullptr).ok());
@@ -233,6 +264,21 @@ TEST_F(HashObserverTest,
 
   std::vector<minikv::FieldValue> values;
   ASSERT_TRUE(hash_module_->ReadAll("user:fail", &values).ok());
+  EXPECT_TRUE(values.empty());
+
+  uint64_t inserted = 0;
+  status = hash_module_->PutFields(
+      "user:fail:multi", {{"name", "alice"}, {"city", "shanghai"}},
+      &inserted);
+  ASSERT_TRUE(status.IsAborted());
+  EXPECT_NE(status.ToString().find("observer failure"), std::string::npos);
+  EXPECT_EQ(inserted, 0U);
+
+  EXPECT_TRUE(ReadDefault(MarkerObserver::PutMarkerKey("user:fail:multi"),
+                          &marker_value)
+                  .IsNotFound());
+
+  ASSERT_TRUE(hash_module_->ReadAll("user:fail:multi", &values).ok());
   EXPECT_TRUE(values.empty());
 }
 

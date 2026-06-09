@@ -160,6 +160,64 @@ TEST_F(HashModuleTest, PutFieldAndReadAll) {
   ASSERT_EQ(values.size(), 2U);
 }
 
+TEST_F(HashModuleTest, PutFieldsDeduplicatesAndSupportsReadApis) {
+  uint64_t inserted = 0;
+  ASSERT_TRUE(hash_module_
+                  ->PutFields("user:multi",
+                              {{"name", "alice"},
+                               {"city", "shanghai"},
+                               {"name", "alice-2"}},
+                              &inserted)
+                  .ok());
+  EXPECT_EQ(inserted, 2U);
+
+  minikv::KeyMetadata metadata = ReadRawMetadata("user:multi");
+  EXPECT_EQ(metadata.size, 2U);
+
+  minikv::FieldLookup lookup;
+  ASSERT_TRUE(hash_module_->ReadField("user:multi", "name", &lookup).ok());
+  ASSERT_TRUE(lookup.found);
+  EXPECT_EQ(lookup.value, "alice-2");
+
+  ASSERT_TRUE(hash_module_->ReadField("user:multi", "missing", &lookup).ok());
+  EXPECT_FALSE(lookup.found);
+
+  std::vector<minikv::FieldLookup> lookups;
+  ASSERT_TRUE(hash_module_
+                  ->ReadFields("user:multi", {"city", "missing", "name"},
+                               &lookups)
+                  .ok());
+  ASSERT_EQ(lookups.size(), 3U);
+  ASSERT_TRUE(lookups[0].found);
+  EXPECT_EQ(lookups[0].value, "shanghai");
+  EXPECT_FALSE(lookups[1].found);
+  ASSERT_TRUE(lookups[2].found);
+  EXPECT_EQ(lookups[2].value, "alice-2");
+
+  uint64_t length = 0;
+  ASSERT_TRUE(hash_module_->Length("user:multi", &length).ok());
+  EXPECT_EQ(length, 2U);
+
+  bool exists = false;
+  ASSERT_TRUE(hash_module_->FieldExists("user:multi", "city", &exists).ok());
+  EXPECT_TRUE(exists);
+  ASSERT_TRUE(hash_module_->FieldExists("user:multi", "missing", &exists).ok());
+  EXPECT_FALSE(exists);
+
+  ASSERT_TRUE(hash_module_
+                  ->PutFields("user:multi",
+                              {{"city", "beijing"}, {"age", "30"}},
+                              &inserted)
+                  .ok());
+  EXPECT_EQ(inserted, 1U);
+  metadata = ReadRawMetadata("user:multi");
+  EXPECT_EQ(metadata.size, 3U);
+
+  ASSERT_TRUE(hash_module_->ReadField("user:multi", "city", &lookup).ok());
+  ASSERT_TRUE(lookup.found);
+  EXPECT_EQ(lookup.value, "beijing");
+}
+
 TEST_F(HashModuleTest, DeleteFieldsRemovesFieldsAndWritesTombstone) {
   ASSERT_TRUE(hash_module_->PutField("user:2", "a", "1", nullptr).ok());
   ASSERT_TRUE(hash_module_->PutField("user:2", "b", "2", nullptr).ok());
@@ -190,6 +248,24 @@ TEST_F(HashModuleTest, MissingKeyOperationsReturnEmptySuccess) {
   ASSERT_TRUE(hash_module_->ReadAll("missing", &values).ok());
   ASSERT_TRUE(values.empty());
 
+  minikv::FieldLookup lookup;
+  ASSERT_TRUE(hash_module_->ReadField("missing", "a", &lookup).ok());
+  EXPECT_FALSE(lookup.found);
+
+  std::vector<minikv::FieldLookup> lookups;
+  ASSERT_TRUE(hash_module_->ReadFields("missing", {"a", "b"}, &lookups).ok());
+  ASSERT_EQ(lookups.size(), 2U);
+  EXPECT_FALSE(lookups[0].found);
+  EXPECT_FALSE(lookups[1].found);
+
+  uint64_t length = 99;
+  ASSERT_TRUE(hash_module_->Length("missing", &length).ok());
+  EXPECT_EQ(length, 0U);
+
+  bool exists = true;
+  ASSERT_TRUE(hash_module_->FieldExists("missing", "a", &exists).ok());
+  EXPECT_FALSE(exists);
+
   uint64_t deleted = 42;
   ASSERT_TRUE(hash_module_->DeleteFields("missing", {"a", "b"}, &deleted).ok());
   ASSERT_EQ(deleted, 0U);
@@ -201,7 +277,9 @@ TEST_F(HashModuleTest, DeleteCountsOnlyExistingFields) {
 
   uint64_t deleted = 0;
   ASSERT_TRUE(
-      hash_module_->DeleteFields("user:4", {"a", "x", "b", "y"}, &deleted).ok());
+      hash_module_
+          ->DeleteFields("user:4", {"a", "a", "x", "b", "b", "y"}, &deleted)
+          .ok());
   ASSERT_EQ(deleted, 2U);
 
   std::vector<minikv::FieldValue> values;
@@ -236,6 +314,26 @@ TEST_F(HashModuleTest, NonHashMetadataStillReturnsTypeMismatch) {
 
   std::vector<minikv::FieldValue> values;
   status = hash_module_->ReadAll("user:string", &values);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("key type mismatch"), std::string::npos);
+
+  minikv::FieldLookup lookup;
+  status = hash_module_->ReadField("user:string", "name", &lookup);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("key type mismatch"), std::string::npos);
+
+  std::vector<minikv::FieldLookup> lookups;
+  status = hash_module_->ReadFields("user:string", {"name"}, &lookups);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("key type mismatch"), std::string::npos);
+
+  uint64_t length = 0;
+  status = hash_module_->Length("user:string", &length);
+  ASSERT_TRUE(status.IsInvalidArgument());
+  EXPECT_NE(status.ToString().find("key type mismatch"), std::string::npos);
+
+  bool exists = false;
+  status = hash_module_->FieldExists("user:string", "name", &exists);
   ASSERT_TRUE(status.IsInvalidArgument());
   EXPECT_NE(status.ToString().find("key type mismatch"), std::string::npos);
 
